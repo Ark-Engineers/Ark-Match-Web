@@ -10,8 +10,7 @@ const router = createRouter({
 
 function resolveHomePath(role: unknown): string {
   const picked = String(role ?? '').toUpperCase()
-  if (picked === 'ADMIN') return '/admin/dashboard'
-  if (picked) return '/user/home'
+  if (picked) return '/home'
   return '/login'
 }
 

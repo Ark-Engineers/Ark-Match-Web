@@ -22,8 +22,8 @@ const loading = ref(false)
 
 function resolveHomePath(role: unknown): string {
   const picked = String(role ?? '').toUpperCase()
-  if (picked === 'ADMIN') return '/admin/dashboard'
-  return '/user/home'
+  if (picked) return '/home'
+  return '/login'
 }
 
 function validate(): boolean {

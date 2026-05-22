@@ -12,6 +12,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/dashboard/index.vue'),
         meta: { requiresAuth: true, role: 'ADMIN' },
       },
+      {
+        path: 'ban',
+        name: 'admin-ban',
+        component: () => import('@/views/admin/ban/index.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
     ],
   },
 ]
