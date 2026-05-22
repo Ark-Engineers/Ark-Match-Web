@@ -10,8 +10,13 @@ type ApiResponse<T> = { code: number; message: string; data: T }
 const router = useRouter()
 const authStore = useAuthStore()
 
-const isAdmin = computed(() => String(authStore.role ?? '').toUpperCase() === 'ADMIN')
-const roleLabel = computed(() => (isAdmin.value ? '管理员' : '普通用户'))
+const normalizedRole = computed(() => String(authStore.role ?? '').toUpperCase())
+const isAdmin = computed(() => normalizedRole.value === 'ADMIN' || normalizedRole.value === 'SUPER_ADMIN')
+const roleLabel = computed(() => {
+  if (normalizedRole.value === 'SUPER_ADMIN') return '超级管理员'
+  if (normalizedRole.value === 'ADMIN') return '管理员'
+  return '普通用户'
+})
 
 const loading = ref(false)
 const error = ref('')

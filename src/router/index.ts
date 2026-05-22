@@ -30,8 +30,13 @@ router.beforeEach((to) => {
     }
 
     const requiredRole = (to.meta as { role?: unknown }).role
-    if (requiredRole && String(requiredRole).toUpperCase() !== String(auth.role ?? '').toUpperCase()) {
-      return resolveHomePath(auth.role)
+    if (requiredRole) {
+      const required = String(requiredRole).toUpperCase()
+      const actual = String(auth.role ?? '').toUpperCase()
+      const ok =
+        required === actual ||
+        (required === 'ADMIN' && actual === 'SUPER_ADMIN')
+      if (!ok) return resolveHomePath(auth.role)
     }
   }
 })

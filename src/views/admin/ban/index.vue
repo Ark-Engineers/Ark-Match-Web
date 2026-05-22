@@ -11,7 +11,6 @@ type BanRecord = {
   targetType: 'IP' | 'EMAIL' | 'USER' | string
   targetValue: string
   bannedUserId: number | null
-  reportId: number
   adminId: number
   reason: string | null
   durationSeconds: number | null
@@ -61,7 +60,6 @@ const durations = [
 
 const ipForm = reactive({
   value: '',
-  reportId: '',
   batch: '',
   reason: '',
   durationSeconds: durations[1].value as number | null,
@@ -69,7 +67,6 @@ const ipForm = reactive({
 
 const emailForm = reactive({
   value: '',
-  reportId: '',
   batch: '',
   reason: '',
   durationSeconds: durations[1].value as number | null,
@@ -77,7 +74,6 @@ const emailForm = reactive({
 
 const userForm = reactive({
   userId: '',
-  reportId: '',
   batch: '',
   reason: '',
   durationSeconds: durations[1].value as number | null,
@@ -93,7 +89,6 @@ const userSearchForm = reactive({
 })
 
 const userOpForm = reactive({
-  reportId: '',
   reason: '',
   durationSeconds: durations[1].value as number | null,
 })
@@ -104,7 +99,6 @@ const query = reactive({
   targetType: '',
   targetValue: '',
   bannedUserId: '',
-  reportId: '',
   keyword: '',
   adminId: '',
   effectiveFrom: '',
@@ -251,16 +245,6 @@ function toOptionalIsoLocalDateTime(raw: string): string | undefined {
   return v
 }
 
-function toRequiredPositiveInt(raw: string, label: string): number | null {
-  const v = raw.trim()
-  const n = Number(v)
-  if (!v || !Number.isFinite(n) || n <= 0) {
-    error.value = `${label}必须为正整数`
-    return null
-  }
-  return Math.floor(n)
-}
-
 function resolveErrorMessage(err: unknown): string {
   const anyErr = err as any
   const msgFromApi = anyErr?.response?.data?.message
@@ -309,8 +293,6 @@ async function searchUsers(): Promise<void> {
 }
 
 async function banAssociatedIps(userId: number): Promise<void> {
-  const reportId = toRequiredPositiveInt(userOpForm.reportId, '举报单ID')
-  if (!reportId) return
   loading.value = true
   error.value = ''
   try {
@@ -319,7 +301,6 @@ async function banAssociatedIps(userId: number): Promise<void> {
       method: 'POST',
       data: {
         userId,
-        reportId,
         reason: userOpForm.reason.trim() || null,
         durationSeconds: userOpForm.durationSeconds,
         confirm: false,
@@ -338,8 +319,6 @@ async function banAssociatedIps(userId: number): Promise<void> {
 }
 
 async function banUserEmailOnly(userId: number): Promise<void> {
-  const reportId = toRequiredPositiveInt(userOpForm.reportId, '举报单ID')
-  if (!reportId) return
   loading.value = true
   error.value = ''
   try {
@@ -348,7 +327,6 @@ async function banUserEmailOnly(userId: number): Promise<void> {
       method: 'POST',
       data: {
         userId,
-        reportId,
         reason: userOpForm.reason.trim() || null,
         durationSeconds: userOpForm.durationSeconds,
         confirm: false,
@@ -367,8 +345,6 @@ async function banUserEmailOnly(userId: number): Promise<void> {
 }
 
 async function banUserFull(userId: number): Promise<void> {
-  const reportId = toRequiredPositiveInt(userOpForm.reportId, '举报单ID')
-  if (!reportId) return
   const ok = window.confirm('将执行全维度封禁（关联IP + 绑定邮箱 + 关联账号），并强制下线，是否确认？')
   if (!ok) return
 
@@ -380,7 +356,6 @@ async function banUserFull(userId: number): Promise<void> {
       method: 'POST',
       data: {
         userId,
-        reportId,
         reason: userOpForm.reason.trim() || null,
         durationSeconds: userOpForm.durationSeconds,
         confirm: true,
@@ -457,7 +432,6 @@ async function loadRecords(): Promise<void> {
         targetType: query.targetType || undefined,
         targetValue: query.targetValue || undefined,
         bannedUserId: toOptionalNumber(query.bannedUserId),
-        reportId: toOptionalNumber(query.reportId),
         keyword: query.keyword.trim() || undefined,
         adminId: toOptionalNumber(query.adminId),
         effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
@@ -495,8 +469,6 @@ async function nextPage(): Promise<void> {
 }
 
 async function banIpSingle(): Promise<void> {
-  const reportId = toRequiredPositiveInt(ipForm.reportId, '举报单ID')
-  if (!reportId) return
   loading.value = true
   error.value = ''
   try {
@@ -505,7 +477,6 @@ async function banIpSingle(): Promise<void> {
       method: 'POST',
       data: {
         value: ipForm.value.trim(),
-        reportId,
         reason: ipForm.reason.trim() || null,
         durationSeconds: ipForm.durationSeconds,
       },
@@ -523,8 +494,6 @@ async function banIpSingle(): Promise<void> {
 }
 
 async function banIpBatch(): Promise<void> {
-  const reportId = toRequiredPositiveInt(ipForm.reportId, '举报单ID')
-  if (!reportId) return
   const values = splitLines(ipForm.batch)
   if (!values.length) {
     error.value = '请输入IP列表'
@@ -541,7 +510,6 @@ async function banIpBatch(): Promise<void> {
       method: 'POST',
       data: {
         values,
-        reportId,
         reason: ipForm.reason.trim() || null,
         durationSeconds: ipForm.durationSeconds,
         confirm: true,
@@ -561,8 +529,6 @@ async function banIpBatch(): Promise<void> {
 }
 
 async function banEmailSingle(): Promise<void> {
-  const reportId = toRequiredPositiveInt(emailForm.reportId, '举报单ID')
-  if (!reportId) return
   loading.value = true
   error.value = ''
   try {
@@ -571,7 +537,6 @@ async function banEmailSingle(): Promise<void> {
       method: 'POST',
       data: {
         value: emailForm.value.trim(),
-        reportId,
         reason: emailForm.reason.trim() || null,
         durationSeconds: emailForm.durationSeconds,
       },
@@ -589,8 +554,6 @@ async function banEmailSingle(): Promise<void> {
 }
 
 async function banEmailBatch(): Promise<void> {
-  const reportId = toRequiredPositiveInt(emailForm.reportId, '举报单ID')
-  if (!reportId) return
   const values = splitLines(emailForm.batch)
   if (!values.length) {
     error.value = '请输入邮箱列表'
@@ -607,7 +570,6 @@ async function banEmailBatch(): Promise<void> {
       method: 'POST',
       data: {
         values,
-        reportId,
         reason: emailForm.reason.trim() || null,
         durationSeconds: emailForm.durationSeconds,
         confirm: true,
@@ -633,8 +595,6 @@ async function banUserSingle(): Promise<void> {
     error.value = '用户ID必须为正整数'
     return
   }
-  const reportId = toRequiredPositiveInt(userForm.reportId, '举报单ID')
-  if (!reportId) return
 
   loading.value = true
   error.value = ''
@@ -644,7 +604,6 @@ async function banUserSingle(): Promise<void> {
       method: 'POST',
       data: {
         userId,
-        reportId,
         reason: userForm.reason.trim() || null,
         durationSeconds: userForm.durationSeconds,
       },
@@ -662,8 +621,6 @@ async function banUserSingle(): Promise<void> {
 }
 
 async function banUserBatch(): Promise<void> {
-  const reportId = toRequiredPositiveInt(userForm.reportId, '举报单ID')
-  if (!reportId) return
   const lines = splitLines(userForm.batch)
   if (!lines.length) {
     error.value = '请输入用户ID列表'
@@ -687,7 +644,6 @@ async function banUserBatch(): Promise<void> {
       method: 'POST',
       data: {
         userIds,
-        reportId,
         reason: userForm.reason.trim() || null,
         durationSeconds: userForm.durationSeconds,
         confirm: true,
@@ -742,7 +698,6 @@ async function exportCsv(): Promise<void> {
         targetType: query.targetType || undefined,
         targetValue: query.targetValue || undefined,
         bannedUserId: toOptionalNumber(query.bannedUserId),
-        reportId: toOptionalNumber(query.reportId),
         keyword: query.keyword.trim() || undefined,
         adminId: toOptionalNumber(query.adminId),
         effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
@@ -821,10 +776,6 @@ onMounted(async () => {
               <input v-model.trim="ipForm.value" placeholder="例如：203.0.113.1" />
             </label>
             <label style="display: grid; gap: 6px">
-              <span>举报单ID（必填）</span>
-              <input v-model.trim="ipForm.reportId" placeholder="例如：10001" />
-            </label>
-            <label style="display: grid; gap: 6px">
               <span>批量 IP（每行一个）</span>
               <textarea v-model="ipForm.batch" rows="4" placeholder="203.0.113.1&#10;198.51.100.2"></textarea>
             </label>
@@ -853,10 +804,6 @@ onMounted(async () => {
               <input v-model.trim="emailForm.value" placeholder="例如：user@example.com" />
             </label>
             <label style="display: grid; gap: 6px">
-              <span>举报单ID（必填）</span>
-              <input v-model.trim="emailForm.reportId" placeholder="例如：10001" />
-            </label>
-            <label style="display: grid; gap: 6px">
               <span>批量邮箱（每行一个）</span>
               <textarea v-model="emailForm.batch" rows="4" placeholder="a@example.com&#10;b@example.com"></textarea>
             </label>
@@ -883,10 +830,6 @@ onMounted(async () => {
             <label style="display: grid; gap: 6px">
               <span>单个用户ID</span>
               <input v-model.trim="userForm.userId" placeholder="例如：1" />
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>举报单ID（必填）</span>
-              <input v-model.trim="userForm.reportId" placeholder="例如：10001" />
             </label>
             <label style="display: grid; gap: 6px">
               <span>批量用户ID（每行一个）</span>
@@ -937,10 +880,6 @@ onMounted(async () => {
         </div>
 
         <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-          <label style="display: grid; gap: 6px">
-            <span>举报单ID（必填）</span>
-            <input v-model.trim="userOpForm.reportId" placeholder="例如：10001" />
-          </label>
           <label style="display: grid; gap: 6px">
             <span>封禁时长</span>
             <select v-model="userOpForm.durationSeconds">
@@ -1010,10 +949,6 @@ onMounted(async () => {
             <input v-model.trim="query.bannedUserId" placeholder="用于追溯（可空）" />
           </label>
           <label style="display: grid; gap: 6px">
-            <span>举报单ID</span>
-            <input v-model.trim="query.reportId" placeholder="reportId（可空）" />
-          </label>
-          <label style="display: grid; gap: 6px">
             <span>操作人ID</span>
             <input v-model.trim="query.adminId" placeholder="adminId（可空）" />
           </label>
@@ -1064,7 +999,6 @@ onMounted(async () => {
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">类型</th>
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">目标</th>
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">封禁用户ID</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">举报单ID</th>
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">状态</th>
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">生效</th>
                 <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">到期</th>
@@ -1080,7 +1014,6 @@ onMounted(async () => {
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatTargetType(r.targetType) }}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.targetValue }}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.bannedUserId ?? '-' }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.reportId }}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatBanStatus(r.status) }}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.effectiveAt }}</td>
                 <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.expiresAt || '永久' }}</td>
@@ -1095,7 +1028,7 @@ onMounted(async () => {
                 </td>
               </tr>
               <tr v-if="!pageData.items.length">
-                <td colspan="10" style="padding: 12px; opacity: 0.7">暂无记录</td>
+                <td colspan="9" style="padding: 12px; opacity: 0.7">暂无记录</td>
               </tr>
             </tbody>
           </table>
@@ -1153,7 +1086,6 @@ onMounted(async () => {
             <div><span style="opacity: 0.7">类型：</span>{{ formatTargetType(detailRecord.targetType) }}</div>
             <div><span style="opacity: 0.7">目标：</span>{{ detailRecord.targetValue }}</div>
             <div><span style="opacity: 0.7">封禁用户ID：</span>{{ detailRecord.bannedUserId ?? '-' }}</div>
-            <div><span style="opacity: 0.7">举报单ID：</span>{{ detailRecord.reportId }}</div>
             <div><span style="opacity: 0.7">管理员ID：</span>{{ detailRecord.adminId }}</div>
             <div><span style="opacity: 0.7">状态：</span>{{ formatBanStatus(detailRecord.status) }}</div>
             <div style="grid-column: 1 / -1"><span style="opacity: 0.7">原因：</span>{{ detailRecord.reason || '-' }}</div>

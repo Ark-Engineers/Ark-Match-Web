@@ -55,6 +55,13 @@ async function logout(): Promise<void> {
       </div>
       <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end">
         <button @click="router.push('/admin/ban')" style="padding: 10px 12px">封禁管理</button>
+        <button
+          v-if="String(authStore.session?.role || '').toUpperCase() === 'SUPER_ADMIN'"
+          @click="router.push('/admin/permission')"
+          style="padding: 10px 12px"
+        >
+          权限管理
+        </button>
         <button @click="logout" :disabled="loading" style="padding: 10px 12px">
           {{ loading ? '登出中...' : '登出' }}
         </button>

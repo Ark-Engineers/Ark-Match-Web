@@ -10,7 +10,6 @@ type UserBanRecord = {
   id: number
   targetType: string
   targetValue: string
-  reportId: number
   reason: string | null
   durationSeconds: number | null
   effectiveAt: string
@@ -136,11 +135,10 @@ onMounted(async () => {
       <div v-if="error" style="margin-top: 10px; color: #c00">{{ error }}</div>
 
       <div style="margin-top: 12px; overflow: auto">
-        <table style="width: 100%; border-collapse: collapse; min-width: 980px">
+        <table style="width: 100%; border-collapse: collapse; min-width: 900px">
           <thead>
             <tr>
               <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">ID</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">举报单ID</th>
               <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">类型</th>
               <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">目标</th>
               <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">状态</th>
@@ -152,7 +150,6 @@ onMounted(async () => {
           <tbody>
             <tr v-for="r in pageData.items" :key="r.id">
               <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.id }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.reportId }}</td>
               <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatTargetType(r.targetType) }}</td>
               <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.targetValue }}</td>
               <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatBanStatus(r.status) }}</td>
@@ -161,7 +158,7 @@ onMounted(async () => {
               <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.expiresAt || '永久' }}</td>
             </tr>
             <tr v-if="!pageData.items.length">
-              <td colspan="8" style="padding: 12px; opacity: 0.7">暂无记录</td>
+              <td colspan="7" style="padding: 12px; opacity: 0.7">暂无记录</td>
             </tr>
           </tbody>
         </table>

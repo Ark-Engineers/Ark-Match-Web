@@ -18,10 +18,9 @@ const router = useRouter()
       <div style="border: 1px solid #eee; border-radius: 12px; padding: 14px">
         <div style="font-weight: 600">申诉说明</div>
         <div style="margin-top: 8px; opacity: 0.85">
-          如你认为封禁存在误判，请准备对应的举报单ID与相关证明材料，通过管理员渠道提交申诉。
+          如你认为封禁存在误判，请准备对应的封禁记录ID与相关证明材料，通过管理员渠道提交申诉。
         </div>
       </div>
     </section>
   </main>
 </template>
-
