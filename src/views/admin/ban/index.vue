@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { http, request } from '@/api'
 
@@ -48,8 +48,6 @@ type UserSearchItem = {
   relatedIps: string[]
 }
 
-const router = useRouter()
-
 const durations = [
   { label: '1小时', value: 3600 },
   { label: '1天', value: 86400 },
@@ -57,6 +55,123 @@ const durations = [
   { label: '30天', value: 2592000 },
   { label: '永久', value: null },
 ] as const
+
+const activeTab = ref<'records' | 'ops' | 'users'>('records')
+
+const loading = ref(false)
+const error = ref('')
+
+const isMobile = ref(false)
+const isNarrow = ref(false)
+
+function updateResponsiveState(): void {
+  const w = window.innerWidth
+  isMobile.value = w < 1024
+  isNarrow.value = w < 1360
+}
+
+const bannedUserNicknames = reactive<Record<number, string>>({})
+
+function splitLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function toOptionalNumber(raw: string): number | undefined {
+  const v = raw.trim()
+  if (!v) return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function toOptionalIsoLocalDateTime(raw: string): string | undefined {
+  const v = raw.trim()
+  if (!v) return undefined
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return `${v}:00`
+  return v
+}
+
+function resolveErrorMessage(err: unknown): string {
+  const anyErr = err as any
+  const msgFromApi = anyErr?.response?.data?.message
+  if (typeof msgFromApi === 'string' && msgFromApi.trim()) return msgFromApi
+  if (typeof anyErr?.message === 'string' && anyErr.message.trim()) return anyErr.message
+  return '操作失败，请稍后重试'
+}
+
+function formatBanStatus(status: string): string {
+  const s = String(status || '').toUpperCase()
+  if (s === 'ACTIVE') return '生效中'
+  if (s === 'EXPIRED') return '已解封（到期）'
+  if (s === 'REVOKED') return '已解封（提前）'
+  return status
+}
+
+function formatTargetType(targetType: string): string {
+  const s = String(targetType || '').toUpperCase()
+  if (s === 'IP') return 'IP'
+  if (s === 'EMAIL') return '邮箱'
+  if (s === 'USER') return '用户'
+  return targetType
+}
+
+function formatUserStatus(status: string): string {
+  const s = String(status || '').toUpperCase()
+  if (s === 'NORMAL') return '正常'
+  if (s === 'SUSPENDED') return '限制'
+  if (s === 'BANNED') return '封禁'
+  return status
+}
+
+function formatActionType(actionType: string): string {
+  const s = String(actionType || '').toUpperCase()
+  if (s === 'BAN') return '封禁'
+  if (s === 'UNBAN_MANUAL') return '提前解封'
+  if (s === 'UNBAN_AUTO') return '到期解封'
+  return actionType
+}
+
+function formatUnbanType(unbanType: string | null): string {
+  const s = String(unbanType || '').toUpperCase()
+  if (!s) return '-'
+  if (s === 'AUTO') return '自动'
+  if (s === 'MANUAL') return '手动'
+  return unbanType || '-'
+}
+
+function getBannedUserNickname(userId: number | null | undefined): string {
+  if (!userId) return '-'
+  return bannedUserNicknames[userId] || '-'
+}
+
+async function ensureBannedUserNicknames(ids: Array<number | null | undefined>): Promise<void> {
+  const unique = Array.from(
+    new Set(
+      ids
+        .filter((x): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0)
+        .filter((x) => !bannedUserNicknames[x]),
+    ),
+  )
+  if (!unique.length) return
+
+  await Promise.all(
+    unique.map(async (userId) => {
+      try {
+        const res = await request<ApiResponse<UserSearchItem[]>>({
+          url: '/admin/user/search',
+          method: 'GET',
+          params: { userId, limit: 1 },
+        })
+        if (res.code !== 0) return
+        const item = (res.data || [])[0]
+        if (!item) return
+        bannedUserNicknames[userId] = item.nickname?.trim() || item.account || `用户${userId}`
+      } catch {}
+    }),
+  )
+}
 
 const ipForm = reactive({
   value: '',
@@ -101,96 +216,87 @@ const query = reactive({
   bannedUserId: '',
   keyword: '',
   adminId: '',
-  effectiveFrom: '',
-  effectiveTo: '',
+  effectiveFrom: '' as string | '',
+  effectiveTo: '' as string | '',
   status: '',
   page: 1,
   size: 20,
 })
 
-const loading = ref(false)
-const error = ref('')
-
 const pageData = ref<PageResponse<BanRecord>>({ total: 0, page: 1, size: 20, items: [] })
 const selectedIds = ref<number[]>([])
+
+const detailVisible = ref(false)
 const detailRecord = ref<BanRecord | null>(null)
 const detailLogs = ref<BanOperationLog[]>([])
 const detailLoading = ref(false)
 
-const totalPages = computed(() => Math.max(1, Math.ceil(pageData.value.total / pageData.value.size)))
+function clearError(): void {
+  error.value = ''
+}
 
-const allSelectedInPage = computed(() => {
-  const ids = pageData.value.items.map((x) => x.id)
-  if (!ids.length) return false
-  const set = new Set(selectedIds.value)
-  return ids.every((id) => set.has(id))
-})
+function onSelectionChange(rows: BanRecord[]): void {
+  selectedIds.value = rows.map((r) => r.id)
+}
 
-function toggleSelectAllInPage(): void {
-  const ids = pageData.value.items.map((x) => x.id)
-  const set = new Set(selectedIds.value)
-  if (ids.every((id) => set.has(id))) {
-    ids.forEach((id) => set.delete(id))
-  } else {
-    ids.forEach((id) => set.add(id))
+async function loadRecords(): Promise<void> {
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<PageResponse<BanRecord>>>({
+      url: '/admin/ban/records',
+      method: 'GET',
+      params: {
+        targetType: query.targetType || undefined,
+        targetValue: query.targetValue.trim() || undefined,
+        bannedUserId: toOptionalNumber(query.bannedUserId),
+        keyword: query.keyword.trim() || undefined,
+        adminId: toOptionalNumber(query.adminId),
+        effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
+        effectiveTo: toOptionalIsoLocalDateTime(query.effectiveTo),
+        status: query.status || undefined,
+        page: query.page,
+        size: query.size,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '查询失败'
+      return
+    }
+    pageData.value = res.data
+    void ensureBannedUserNicknames(pageData.value.items.map((x) => x.bannedUserId))
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
   }
-  selectedIds.value = Array.from(set)
 }
 
-function toggleSelectOne(id: number): void {
-  const set = new Set(selectedIds.value)
-  if (set.has(id)) set.delete(id)
-  else set.add(id)
-  selectedIds.value = Array.from(set)
+async function applyQuery(): Promise<void> {
+  query.page = 1
+  await loadRecords()
 }
 
-function clearSelection(): void {
-  selectedIds.value = []
-}
-
-function formatBanStatus(status: string): string {
-  const s = String(status || '').toUpperCase()
-  if (s === 'ACTIVE') return '生效中'
-  if (s === 'EXPIRED') return '已解封（到期）'
-  if (s === 'REVOKED') return '已解封（提前）'
-  return status
-}
-
-function formatUnbanType(unbanType: string | null): string {
-  const s = String(unbanType || '').toUpperCase()
-  if (!s) return '-'
-  if (s === 'AUTO') return '自动'
-  if (s === 'MANUAL') return '手动'
-  return unbanType || '-'
-}
-
-function formatActionType(actionType: string): string {
-  const s = String(actionType || '').toUpperCase()
-  if (s === 'BAN') return '封禁'
-  if (s === 'UNBAN_MANUAL') return '提前解封'
-  if (s === 'UNBAN_AUTO') return '到期解封'
-  return actionType
-}
-
-function formatUserStatus(status: string): string {
-  const s = String(status || '').toUpperCase()
-  if (s === 'NORMAL') return '正常'
-  if (s === 'SUSPENDED') return '限制'
-  if (s === 'BANNED') return '封禁'
-  return status
-}
-
-function formatTargetType(targetType: string): string {
-  const s = String(targetType || '').toUpperCase()
-  if (s === 'IP') return 'IP'
-  if (s === 'EMAIL') return '邮箱'
-  if (s === 'USER') return '用户'
-  return targetType
+async function resetQuery(): Promise<void> {
+  query.targetType = ''
+  query.targetValue = ''
+  query.bannedUserId = ''
+  query.keyword = ''
+  query.adminId = ''
+  query.effectiveFrom = ''
+  query.effectiveTo = ''
+  query.status = ''
+  query.page = 1
+  query.size = 20
+  await loadRecords()
 }
 
 async function openDetail(recordId: number): Promise<void> {
+  detailVisible.value = true
   detailLoading.value = true
-  error.value = ''
+  clearError()
+  detailRecord.value = null
+  detailLogs.value = []
   try {
     const recordRes = await request<ApiResponse<BanRecord>>({
       url: `/admin/ban/records/${recordId}`,
@@ -201,16 +307,14 @@ async function openDetail(recordId: number): Promise<void> {
       return
     }
     detailRecord.value = recordRes.data
+    void ensureBannedUserNicknames([detailRecord.value?.bannedUserId])
 
     const logRes = await request<ApiResponse<PageResponse<BanOperationLog>>>({
       url: '/admin/ban/logs',
       method: 'GET',
       params: { recordId, page: 1, size: 50 },
     })
-    if (logRes.code !== 0) {
-      detailLogs.value = []
-      return
-    }
+    if (logRes.code !== 0) return
     detailLogs.value = logRes.data.items || []
   } catch (e) {
     error.value = resolveErrorMessage(e)
@@ -219,38 +323,316 @@ async function openDetail(recordId: number): Promise<void> {
   }
 }
 
-function closeDetail(): void {
-  detailRecord.value = null
-  detailLogs.value = []
+async function unban(recordId: number): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`确认解封记录 #${recordId} 吗？`, '确认操作', {
+      confirmButtonText: '确认解封',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
+
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord>>({
+      url: '/admin/ban/unban',
+      method: 'POST',
+      data: { recordId },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '解封失败'
+      return
+    }
+    ElMessage.success('已解封')
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
 }
 
-function splitLines(raw: string): string[] {
-  return raw
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+async function exportCsv(params: Record<string, unknown>, filename: string): Promise<void> {
+  loading.value = true
+  clearError()
+  try {
+    const response = await http.request({
+      url: '/admin/ban/records/export',
+      method: 'GET',
+      responseType: 'blob',
+      params,
+    })
+    const blob = response.data as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
 }
 
-function toOptionalNumber(raw: string): number | undefined {
-  const v = raw.trim()
-  if (!v) return undefined
-  const n = Number(v)
-  return Number.isFinite(n) ? n : undefined
+async function exportAll(): Promise<void> {
+  await exportCsv(
+    {
+      targetType: query.targetType || undefined,
+      targetValue: query.targetValue.trim() || undefined,
+      bannedUserId: toOptionalNumber(query.bannedUserId),
+      keyword: query.keyword.trim() || undefined,
+      adminId: toOptionalNumber(query.adminId),
+      effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
+      effectiveTo: toOptionalIsoLocalDateTime(query.effectiveTo),
+      status: query.status || undefined,
+    },
+    'ban-records.csv',
+  )
 }
 
-function toOptionalIsoLocalDateTime(raw: string): string | undefined {
-  const v = raw.trim()
-  if (!v) return undefined
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return `${v}:00`
-  return v
+async function exportSelected(): Promise<void> {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先勾选要导出的记录')
+    return
+  }
+  await exportCsv({ ids: selectedIds.value.join(',') }, 'ban-records-selected.csv')
 }
 
-function resolveErrorMessage(err: unknown): string {
-  const anyErr = err as any
-  const msgFromApi = anyErr?.response?.data?.message
-  if (typeof msgFromApi === 'string' && msgFromApi.trim()) return msgFromApi
-  if (typeof anyErr?.message === 'string' && anyErr.message.trim()) return anyErr.message
-  return '操作失败，请稍后重试'
+async function banIpSingle(): Promise<void> {
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord>>({
+      url: '/admin/ban/ip',
+      method: 'POST',
+      data: {
+        value: ipForm.value.trim(),
+        reason: ipForm.reason.trim() || null,
+        durationSeconds: ipForm.durationSeconds,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '封禁失败'
+      return
+    }
+    ElMessage.success('封禁成功')
+    ipForm.value = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function banIpBatch(): Promise<void> {
+  const values = splitLines(ipForm.batch)
+  if (!values.length) {
+    ElMessage.warning('请输入IP列表')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`即将批量封禁 ${values.length} 个IP，是否确认？`, '二次确认', {
+      confirmButtonText: '确认封禁',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
+
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord[]>>({
+      url: '/admin/ban/ip/batch',
+      method: 'POST',
+      data: {
+        values,
+        reason: ipForm.reason.trim() || null,
+        durationSeconds: ipForm.durationSeconds,
+        confirm: true,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '批量封禁失败'
+      return
+    }
+    ElMessage.success('批量封禁成功')
+    ipForm.batch = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function banEmailSingle(): Promise<void> {
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord>>({
+      url: '/admin/ban/email',
+      method: 'POST',
+      data: {
+        value: emailForm.value.trim(),
+        reason: emailForm.reason.trim() || null,
+        durationSeconds: emailForm.durationSeconds,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '封禁失败'
+      return
+    }
+    ElMessage.success('封禁成功')
+    emailForm.value = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function banEmailBatch(): Promise<void> {
+  const values = splitLines(emailForm.batch)
+  if (!values.length) {
+    ElMessage.warning('请输入邮箱列表')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`即将批量封禁 ${values.length} 个邮箱，是否确认？`, '二次确认', {
+      confirmButtonText: '确认封禁',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
+
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord[]>>({
+      url: '/admin/ban/email/batch',
+      method: 'POST',
+      data: {
+        values,
+        reason: emailForm.reason.trim() || null,
+        durationSeconds: emailForm.durationSeconds,
+        confirm: true,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '批量封禁失败'
+      return
+    }
+    ElMessage.success('批量封禁成功')
+    emailForm.batch = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function banUserSingle(): Promise<void> {
+  const raw = userForm.userId.trim()
+  const userId = Number(raw)
+  if (!raw || !Number.isFinite(userId) || userId <= 0) {
+    ElMessage.warning('用户ID必须为正整数')
+    return
+  }
+
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord>>({
+      url: '/admin/ban/user',
+      method: 'POST',
+      data: {
+        userId,
+        reason: userForm.reason.trim() || null,
+        durationSeconds: userForm.durationSeconds,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '封禁失败'
+      return
+    }
+    ElMessage.success('封禁成功')
+    userForm.userId = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function banUserBatch(): Promise<void> {
+  const lines = splitLines(userForm.batch)
+  if (!lines.length) {
+    ElMessage.warning('请输入用户ID列表')
+    return
+  }
+
+  const userIds = lines.map((s) => Number(s)).filter((n) => Number.isFinite(n) && n > 0)
+  if (!userIds.length || userIds.length !== lines.length) {
+    ElMessage.warning('用户ID必须为数字，每行一个')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`即将批量封禁 ${userIds.length} 个用户ID，是否确认？`, '二次确认', {
+      confirmButtonText: '确认封禁',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
+
+  loading.value = true
+  clearError()
+  try {
+    const res = await request<ApiResponse<BanRecord[]>>({
+      url: '/admin/ban/user/batch',
+      method: 'POST',
+      data: {
+        userIds,
+        reason: userForm.reason.trim() || null,
+        durationSeconds: userForm.durationSeconds,
+        confirm: true,
+      },
+    })
+    if (res.code !== 0) {
+      error.value = res.message || '批量封禁失败'
+      return
+    }
+    ElMessage.success('批量封禁成功')
+    userForm.batch = ''
+    await loadRecords()
+  } catch (e) {
+    error.value = resolveErrorMessage(e)
+  } finally {
+    loading.value = false
+  }
 }
 
 async function searchUsers(): Promise<void> {
@@ -261,12 +643,12 @@ async function searchUsers(): Promise<void> {
   const ip = userSearchForm.ip.trim()
   const hasAny = !!userId || !!account || !!nickname || !!email || !!ip
   if (!hasAny) {
-    error.value = '请输入用户ID / 账号 / 昵称 / 邮箱 / IP 任一条件'
+    ElMessage.warning('请输入用户ID / 账号 / 昵称 / 邮箱 / IP 任一条件')
     return
   }
 
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     const res = await request<ApiResponse<UserSearchItem[]>>({
       url: '/admin/user/search',
@@ -294,7 +676,7 @@ async function searchUsers(): Promise<void> {
 
 async function banAssociatedIps(userId: number): Promise<void> {
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     const res = await request<ApiResponse<BanRecord[]>>({
       url: '/admin/user/ban/ip-only',
@@ -310,6 +692,7 @@ async function banAssociatedIps(userId: number): Promise<void> {
       error.value = res.message || '封禁失败'
       return
     }
+    ElMessage.success('已封禁关联IP')
     await loadRecords()
   } catch (e) {
     error.value = resolveErrorMessage(e)
@@ -320,7 +703,7 @@ async function banAssociatedIps(userId: number): Promise<void> {
 
 async function banUserEmailOnly(userId: number): Promise<void> {
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     const res = await request<ApiResponse<BanRecord[]>>({
       url: '/admin/user/ban/email-only',
@@ -336,6 +719,7 @@ async function banUserEmailOnly(userId: number): Promise<void> {
       error.value = res.message || '封禁失败'
       return
     }
+    ElMessage.success('已封禁邮箱')
     await loadRecords()
   } catch (e) {
     error.value = resolveErrorMessage(e)
@@ -345,11 +729,19 @@ async function banUserEmailOnly(userId: number): Promise<void> {
 }
 
 async function banUserFull(userId: number): Promise<void> {
-  const ok = window.confirm('将执行全维度封禁（关联IP + 绑定邮箱 + 关联账号），并强制下线，是否确认？')
-  if (!ok) return
+  try {
+    await ElMessageBox.confirm('将执行全维度封禁（关联IP + 绑定邮箱 + 关联账号），并强制下线，是否确认？', '二次确认', {
+      confirmButtonText: '确认封禁',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
 
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     const res = await request<ApiResponse<BanRecord[]>>({
       url: '/admin/user/ban/full',
@@ -365,6 +757,7 @@ async function banUserFull(userId: number): Promise<void> {
       error.value = res.message || '封禁失败'
       return
     }
+    ElMessage.success('已执行全封禁')
     await loadRecords()
   } catch (e) {
     error.value = resolveErrorMessage(e)
@@ -374,11 +767,19 @@ async function banUserFull(userId: number): Promise<void> {
 }
 
 async function unbanUserRelated(userId: number): Promise<void> {
-  const ok = window.confirm(`将解除用户 ${userId} 相关的所有“生效中”封禁记录，是否确认？`)
-  if (!ok) return
+  try {
+    await ElMessageBox.confirm(`将解除用户 ${userId} 相关的所有“生效中”封禁记录，是否确认？`, '二次确认', {
+      confirmButtonText: '确认解封',
+      cancelButtonText: '取消',
+      type: 'warning',
+      closeOnClickModal: false,
+    })
+  } catch {
+    return
+  }
 
   loading.value = true
-  error.value = ''
+  clearError()
   try {
     const listRes = await request<ApiResponse<PageResponse<BanRecord>>>({
       url: '/admin/ban/records',
@@ -396,7 +797,7 @@ async function unbanUserRelated(userId: number): Promise<void> {
     }
     const items = listRes.data.items || []
     if (!items.length) {
-      error.value = '该用户暂无生效中的封禁记录'
+      ElMessage.info('该用户暂无生效中的封禁记录')
       return
     }
 
@@ -412,6 +813,7 @@ async function unbanUserRelated(userId: number): Promise<void> {
       }
     }
 
+    ElMessage.success('已解除该用户相关封禁')
     await loadRecords()
     await searchUsers()
   } catch (e) {
@@ -421,793 +823,413 @@ async function unbanUserRelated(userId: number): Promise<void> {
   }
 }
 
-async function loadRecords(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<PageResponse<BanRecord>>>({
-      url: '/admin/ban/records',
-      method: 'GET',
-      params: {
-        targetType: query.targetType || undefined,
-        targetValue: query.targetValue || undefined,
-        bannedUserId: toOptionalNumber(query.bannedUserId),
-        keyword: query.keyword.trim() || undefined,
-        adminId: toOptionalNumber(query.adminId),
-        effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
-        effectiveTo: toOptionalIsoLocalDateTime(query.effectiveTo),
-        status: query.status || undefined,
-        page: query.page,
-        size: query.size,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '查询失败'
-      return
-    }
-    pageData.value = res.data
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
+const paginationLayout = computed(() => {
+  if (isMobile.value) return 'prev, pager, next'
+  return 'total, sizes, prev, pager, next, jumper'
+})
 
-async function applyQuery(): Promise<void> {
-  query.page = 1
-  await loadRecords()
-}
+onMounted(() => {
+  updateResponsiveState()
+  window.addEventListener('resize', updateResponsiveState)
+  void loadRecords()
+})
 
-async function prevPage(): Promise<void> {
-  query.page = Math.max(1, query.page - 1)
-  await loadRecords()
-}
-
-async function nextPage(): Promise<void> {
-  query.page = Math.min(totalPages.value, query.page + 1)
-  await loadRecords()
-}
-
-async function banIpSingle(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord>>({
-      url: '/admin/ban/ip',
-      method: 'POST',
-      data: {
-        value: ipForm.value.trim(),
-        reason: ipForm.reason.trim() || null,
-        durationSeconds: ipForm.durationSeconds,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '封禁失败'
-      return
-    }
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function banIpBatch(): Promise<void> {
-  const values = splitLines(ipForm.batch)
-  if (!values.length) {
-    error.value = '请输入IP列表'
-    return
-  }
-  const ok = window.confirm(`即将批量封禁 ${values.length} 个IP，是否确认？`)
-  if (!ok) return
-
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord[]>>({
-      url: '/admin/ban/ip/batch',
-      method: 'POST',
-      data: {
-        values,
-        reason: ipForm.reason.trim() || null,
-        durationSeconds: ipForm.durationSeconds,
-        confirm: true,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '批量封禁失败'
-      return
-    }
-    ipForm.batch = ''
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function banEmailSingle(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord>>({
-      url: '/admin/ban/email',
-      method: 'POST',
-      data: {
-        value: emailForm.value.trim(),
-        reason: emailForm.reason.trim() || null,
-        durationSeconds: emailForm.durationSeconds,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '封禁失败'
-      return
-    }
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function banEmailBatch(): Promise<void> {
-  const values = splitLines(emailForm.batch)
-  if (!values.length) {
-    error.value = '请输入邮箱列表'
-    return
-  }
-  const ok = window.confirm(`即将批量封禁 ${values.length} 个邮箱，是否确认？`)
-  if (!ok) return
-
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord[]>>({
-      url: '/admin/ban/email/batch',
-      method: 'POST',
-      data: {
-        values,
-        reason: emailForm.reason.trim() || null,
-        durationSeconds: emailForm.durationSeconds,
-        confirm: true,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '批量封禁失败'
-      return
-    }
-    emailForm.batch = ''
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function banUserSingle(): Promise<void> {
-  const raw = userForm.userId.trim()
-  const userId = Number(raw)
-  if (!raw || !Number.isFinite(userId) || userId <= 0) {
-    error.value = '用户ID必须为正整数'
-    return
-  }
-
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord>>({
-      url: '/admin/ban/user',
-      method: 'POST',
-      data: {
-        userId,
-        reason: userForm.reason.trim() || null,
-        durationSeconds: userForm.durationSeconds,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '封禁失败'
-      return
-    }
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function banUserBatch(): Promise<void> {
-  const lines = splitLines(userForm.batch)
-  if (!lines.length) {
-    error.value = '请输入用户ID列表'
-    return
-  }
-
-  const userIds = lines.map((s) => Number(s)).filter((n) => Number.isFinite(n) && n > 0)
-  if (!userIds.length || userIds.length !== lines.length) {
-    error.value = '用户ID必须为数字，每行一个'
-    return
-  }
-
-  const ok = window.confirm(`即将批量封禁 ${userIds.length} 个用户ID，是否确认？`)
-  if (!ok) return
-
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord[]>>({
-      url: '/admin/ban/user/batch',
-      method: 'POST',
-      data: {
-        userIds,
-        reason: userForm.reason.trim() || null,
-        durationSeconds: userForm.durationSeconds,
-        confirm: true,
-      },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '批量封禁失败'
-      return
-    }
-    userForm.batch = ''
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function unban(recordId: number): Promise<void> {
-  const ok = window.confirm(`确认解封记录 #${recordId} 吗？`)
-  if (!ok) return
-
-  loading.value = true
-  error.value = ''
-  try {
-    const res = await request<ApiResponse<BanRecord>>({
-      url: '/admin/ban/unban',
-      method: 'POST',
-      data: { recordId },
-    })
-    if (res.code !== 0) {
-      error.value = res.message || '解封失败'
-      return
-    }
-    await loadRecords()
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function exportCsv(): Promise<void> {
-  loading.value = true
-  error.value = ''
-  try {
-    const response = await http.request({
-      url: '/admin/ban/records/export',
-      method: 'GET',
-      responseType: 'blob',
-      params: {
-        targetType: query.targetType || undefined,
-        targetValue: query.targetValue || undefined,
-        bannedUserId: toOptionalNumber(query.bannedUserId),
-        keyword: query.keyword.trim() || undefined,
-        adminId: toOptionalNumber(query.adminId),
-        effectiveFrom: toOptionalIsoLocalDateTime(query.effectiveFrom),
-        effectiveTo: toOptionalIsoLocalDateTime(query.effectiveTo),
-        status: query.status || undefined,
-      },
-    })
-    const blob = response.data as Blob
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'ban-records.csv'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function exportSelectedCsv(): Promise<void> {
-  if (!selectedIds.value.length) {
-    error.value = '请先勾选要导出的记录'
-    return
-  }
-  loading.value = true
-  error.value = ''
-  try {
-    const response = await http.request({
-      url: '/admin/ban/records/export',
-      method: 'GET',
-      responseType: 'blob',
-      params: { ids: selectedIds.value.join(',') },
-    })
-    const blob = response.data as Blob
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'ban-records-selected.csv'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    error.value = resolveErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
-
-onMounted(async () => {
-  await loadRecords()
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateResponsiveState)
 })
 </script>
 
 <template>
-  <main class="page">
-    <header style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+  <div class="admin-page">
+    <div class="admin-page-header">
       <div>
-        <h1 style="margin: 0 0 4px">封禁管理</h1>
-        <div style="opacity: 0.75">/admin/ban</div>
+        <div class="admin-title">封禁管理</div>
       </div>
-      <button @click="router.push('/admin/dashboard')" style="padding: 10px 12px">返回管理首页</button>
-    </header>
-
-    <section style="margin-top: 16px; display: grid; gap: 16px">
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px">
-        <div style="border: 1px solid #eee; border-radius: 8px; padding: 12px">
-          <h2 style="margin: 0 0 12px; font-size: 16px">IP 封禁</h2>
-          <div style="display: grid; gap: 8px">
-            <label style="display: grid; gap: 6px">
-              <span>单个 IP</span>
-              <input v-model.trim="ipForm.value" placeholder="例如：203.0.113.1" />
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>批量 IP（每行一个）</span>
-              <textarea v-model="ipForm.batch" rows="4" placeholder="203.0.113.1&#10;198.51.100.2"></textarea>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>封禁时长</span>
-              <select v-model="ipForm.durationSeconds">
-                <option v-for="d in durations" :key="d.label" :value="d.value">{{ d.label }}</option>
-              </select>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>原因（可选）</span>
-              <input v-model.trim="ipForm.reason" />
-            </label>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap">
-              <button @click="banIpSingle" :disabled="loading" style="padding: 10px 12px">封禁单个IP</button>
-              <button @click="banIpBatch" :disabled="loading" style="padding: 10px 12px">批量封禁IP</button>
-            </div>
-          </div>
-        </div>
-
-        <div style="border: 1px solid #eee; border-radius: 8px; padding: 12px">
-          <h2 style="margin: 0 0 12px; font-size: 16px">邮箱封禁</h2>
-          <div style="display: grid; gap: 8px">
-            <label style="display: grid; gap: 6px">
-              <span>单个邮箱</span>
-              <input v-model.trim="emailForm.value" placeholder="例如：user@example.com" />
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>批量邮箱（每行一个）</span>
-              <textarea v-model="emailForm.batch" rows="4" placeholder="a@example.com&#10;b@example.com"></textarea>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>封禁时长</span>
-              <select v-model="emailForm.durationSeconds">
-                <option v-for="d in durations" :key="d.label" :value="d.value">{{ d.label }}</option>
-              </select>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>原因（可选）</span>
-              <input v-model.trim="emailForm.reason" />
-            </label>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap">
-              <button @click="banEmailSingle" :disabled="loading" style="padding: 10px 12px">封禁单个邮箱</button>
-              <button @click="banEmailBatch" :disabled="loading" style="padding: 10px 12px">批量封禁邮箱</button>
-            </div>
-          </div>
-        </div>
-
-        <div style="border: 1px solid #eee; border-radius: 8px; padding: 12px">
-          <h2 style="margin: 0 0 12px; font-size: 16px">用户封禁</h2>
-          <div style="display: grid; gap: 8px">
-            <label style="display: grid; gap: 6px">
-              <span>单个用户ID</span>
-              <input v-model.trim="userForm.userId" placeholder="例如：1" />
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>批量用户ID（每行一个）</span>
-              <textarea v-model="userForm.batch" rows="4" placeholder="1&#10;2&#10;3"></textarea>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>封禁时长</span>
-              <select v-model="userForm.durationSeconds">
-                <option v-for="d in durations" :key="d.label" :value="d.value">{{ d.label }}</option>
-              </select>
-            </label>
-            <label style="display: grid; gap: 6px">
-              <span>原因（可选）</span>
-              <input v-model.trim="userForm.reason" />
-            </label>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap">
-              <button @click="banUserSingle" :disabled="loading" style="padding: 10px 12px">封禁单个用户</button>
-              <button @click="banUserBatch" :disabled="loading" style="padding: 10px 12px">批量封禁用户</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div style="border: 1px solid #eee; border-radius: 8px; padding: 12px">
-        <h2 style="margin: 0 0 12px; font-size: 16px">用户查询与封禁</h2>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-          <label style="display: grid; gap: 6px">
-            <span>用户ID</span>
-            <input v-model.trim="userSearchForm.userId" placeholder="例如：1" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>账号</span>
-            <input v-model.trim="userSearchForm.account" placeholder="例如：admin" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>昵称</span>
-            <input v-model.trim="userSearchForm.nickname" placeholder="例如：小明" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>邮箱</span>
-            <input v-model.trim="userSearchForm.email" placeholder="例如：user@example.com" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>IP</span>
-            <input v-model.trim="userSearchForm.ip" placeholder="例如：203.0.113.1" />
-          </label>
-          <button @click="searchUsers" :disabled="loading" style="padding: 10px 12px">查询用户</button>
-        </div>
-
-        <div style="margin-top: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-          <label style="display: grid; gap: 6px">
-            <span>封禁时长</span>
-            <select v-model="userOpForm.durationSeconds">
-              <option v-for="d in durations" :key="d.label" :value="d.value">{{ d.label }}</option>
-            </select>
-          </label>
-          <label style="display: grid; gap: 6px; flex: 1; min-width: 240px">
-            <span>封禁原因（可选）</span>
-            <input v-model.trim="userOpForm.reason" placeholder="例如：违规行为" />
-          </label>
-        </div>
-
-        <div style="margin-top: 12px; overflow-x: hidden">
-          <table class="userTable" style="width: 100%; border-collapse: collapse">
-            <thead>
-              <tr>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">用户ID</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">账号</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">昵称</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">邮箱</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">状态</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="u in userSearchResults" :key="u.userId">
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ u.userId }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ u.account }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ u.nickname || '-' }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ u.email }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatUserStatus(u.status) }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">
-                  <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                    <button @click="banAssociatedIps(u.userId)" :disabled="loading" style="padding: 6px 8px">封禁关联IP</button>
-                    <button @click="banUserEmailOnly(u.userId)" :disabled="loading" style="padding: 6px 8px">封禁邮箱</button>
-                    <button @click="banUserFull(u.userId)" :disabled="loading" style="padding: 6px 8px">全封禁</button>
-                    <button @click="unbanUserRelated(u.userId)" :disabled="loading" style="padding: 6px 8px">解除封禁</button>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="!userSearchResults.length">
-                <td colspan="6" style="padding: 12px; opacity: 0.7">暂无用户结果</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div style="border: 1px solid #eee; border-radius: 8px; padding: 12px">
-        <h2 style="margin: 0 0 12px; font-size: 16px">封禁记录查询</h2>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-          <label style="display: grid; gap: 6px">
-            <span>目标类型</span>
-            <select v-model="query.targetType">
-              <option value="">全部</option>
-              <option value="IP">IP</option>
-              <option value="EMAIL">EMAIL</option>
-              <option value="USER">USER</option>
-            </select>
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>目标值</span>
-            <input v-model.trim="query.targetValue" placeholder="IP / 邮箱 / 用户ID" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>封禁用户ID</span>
-            <input v-model.trim="query.bannedUserId" placeholder="用于追溯（可空）" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>操作人ID</span>
-            <input v-model.trim="query.adminId" placeholder="adminId（可空）" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>状态</span>
-            <select v-model="query.status">
-              <option value="">全部</option>
-              <option value="ACTIVE">生效中</option>
-              <option value="EXPIRED">已解封（到期）</option>
-              <option value="REVOKED">已解封（提前）</option>
-            </select>
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>关键词</span>
-            <input v-model.trim="query.keyword" placeholder="全文搜索（目标/原因）" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>生效起</span>
-            <input v-model="query.effectiveFrom" type="datetime-local" />
-          </label>
-          <label style="display: grid; gap: 6px">
-            <span>生效止</span>
-            <input v-model="query.effectiveTo" type="datetime-local" />
-          </label>
-          <button
-            @click="applyQuery"
-            :disabled="loading"
-            style="padding: 10px 12px"
-          >
-            查询
-          </button>
-          <button @click="exportCsv" :disabled="loading" style="padding: 10px 12px">导出CSV</button>
-          <button @click="exportSelectedCsv" :disabled="loading" style="padding: 10px 12px">导出选中</button>
-          <div style="opacity: 0.7; align-self: center">已选：{{ selectedIds.length }}</div>
-          <button @click="clearSelection" :disabled="loading || !selectedIds.length" style="padding: 10px 12px">清空选择</button>
-        </div>
-
-        <div v-if="error" style="margin-top: 10px; color: #c00">{{ error }}</div>
-
-        <div style="margin-top: 12px; overflow-x: hidden">
-          <table class="recordsTable" style="width: 100%; border-collapse: collapse">
-            <thead>
-              <tr>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 40px">
-                  <input type="checkbox" :checked="allSelectedInPage" @change="toggleSelectAllInPage" />
-                </th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">ID</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">类型</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">目标</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">封禁用户ID</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">状态</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">生效</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">到期</th>
-                <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="r in pageData.items" :key="r.id">
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3; width: 40px">
-                  <input type="checkbox" :checked="selectedIds.includes(r.id)" @change="toggleSelectOne(r.id)" />
-                </td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.id }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatTargetType(r.targetType) }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.targetValue }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.bannedUserId ?? '-' }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatBanStatus(r.status) }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.effectiveAt }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ r.expiresAt || '永久' }}</td>
-                <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">
-                  <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                    <button @click="openDetail(r.id)" :disabled="loading" style="padding: 6px 8px">详情</button>
-                    <button v-if="r.status === 'ACTIVE'" @click="unban(r.id)" :disabled="loading" style="padding: 6px 8px">
-                      解封
-                    </button>
-                    <span v-else style="opacity: 0.7">-</span>
-                  </div>
-                </td>
-              </tr>
-              <tr v-if="!pageData.items.length">
-                <td colspan="9" style="padding: 12px; opacity: 0.7">暂无记录</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div style="margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
-          <div style="opacity: 0.75">总数：{{ pageData.total }}，第 {{ pageData.page }} / {{ totalPages }} 页</div>
-          <div style="display: flex; gap: 8px">
-            <button
-              @click="prevPage"
-              :disabled="loading || query.page <= 1"
-              style="padding: 6px 10px"
-            >
-              上一页
-            </button>
-            <button
-              @click="nextPage"
-              :disabled="loading || query.page >= totalPages"
-              style="padding: 6px 10px"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <div
-      v-if="detailRecord"
-      style="
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.45);
-        display: grid;
-        place-items: center;
-        padding: 16px;
-        z-index: 50;
-      "
-      @click.self="closeDetail"
-    >
-      <div style="background: #fff; border-radius: 12px; width: min(980px, 100%); max-height: 90vh; overflow: auto">
-        <div style="padding: 14px 16px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; gap: 10px">
-          <div style="display: grid; gap: 4px">
-            <div style="font-size: 16px; font-weight: 600">封禁记录详情</div>
-            <div style="opacity: 0.7; font-size: 12px">#{{ detailRecord.id }}</div>
-          </div>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
-            <button @click="router.push('/user/appeal')" style="padding: 8px 10px">申诉入口</button>
-            <button @click="closeDetail" style="padding: 8px 10px">关闭</button>
-          </div>
-        </div>
-
-        <div style="padding: 16px">
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px">
-            <div><span style="opacity: 0.7">类型：</span>{{ formatTargetType(detailRecord.targetType) }}</div>
-            <div><span style="opacity: 0.7">目标：</span>{{ detailRecord.targetValue }}</div>
-            <div><span style="opacity: 0.7">封禁用户ID：</span>{{ detailRecord.bannedUserId ?? '-' }}</div>
-            <div><span style="opacity: 0.7">管理员ID：</span>{{ detailRecord.adminId }}</div>
-            <div><span style="opacity: 0.7">状态：</span>{{ formatBanStatus(detailRecord.status) }}</div>
-            <div style="grid-column: 1 / -1"><span style="opacity: 0.7">原因：</span>{{ detailRecord.reason || '-' }}</div>
-            <div><span style="opacity: 0.7">时长：</span>{{ detailRecord.durationSeconds ?? '永久' }}</div>
-            <div><span style="opacity: 0.7">生效：</span>{{ detailRecord.effectiveAt }}</div>
-            <div><span style="opacity: 0.7">到期：</span>{{ detailRecord.expiresAt || '永久' }}</div>
-            <div><span style="opacity: 0.7">解封时间：</span>{{ detailRecord.unbannedAt || '-' }}</div>
-            <div><span style="opacity: 0.7">解封人：</span>{{ detailRecord.unbannedBy ?? '-' }}</div>
-            <div><span style="opacity: 0.7">解封类型：</span>{{ formatUnbanType(detailRecord.unbanType) }}</div>
-            <div><span style="opacity: 0.7">创建：</span>{{ detailRecord.createdAt }}</div>
-            <div><span style="opacity: 0.7">更新：</span>{{ detailRecord.updatedAt }}</div>
-          </div>
-
-          <div style="margin-top: 14px; border-top: 1px solid #eee; padding-top: 14px">
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px">
-              <div style="font-weight: 600">操作日志</div>
-              <div v-if="detailLoading" style="opacity: 0.7; font-size: 12px">加载中...</div>
-            </div>
-            <div style="margin-top: 10px; overflow: auto">
-              <table style="width: 100%; border-collapse: collapse; min-width: 820px">
-                <thead>
-                  <tr>
-                    <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">时间</th>
-                    <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">类型</th>
-                    <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">操作人</th>
-                    <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">状态变化</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="l in detailLogs" :key="l.id">
-                    <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ l.createdAt }}</td>
-                    <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatActionType(l.actionType) }}</td>
-                    <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ l.actorId ?? 'SYSTEM' }}</td>
-                    <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ (l.fromStatus || '-') + ' -> ' + l.toStatus }}</td>
-                  </tr>
-                  <tr v-if="!detailLogs.length">
-                    <td colspan="4" style="padding: 12px; opacity: 0.7">暂无日志</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      <div class="admin-header-actions">
+        <el-button type="primary" plain @click="router.push('/admin/dashboard')">返回</el-button>
       </div>
     </div>
-  </main>
+
+    <el-alert
+      v-if="error"
+      type="error"
+      :title="error"
+      show-icon
+      :closable="true"
+      @close="error = ''"
+      style="margin-bottom: 12px"
+    />
+
+      <el-tabs v-model="activeTab" class="admin-tabs">
+        <el-tab-pane label="封禁记录" name="records">
+          <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+            <el-form label-width="88px" class="admin-query-form">
+              <el-row :gutter="12">
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="目标类型">
+                    <el-select v-model="query.targetType" placeholder="全部" clearable>
+                      <el-option label="全部" value="" />
+                      <el-option label="IP" value="IP" />
+                      <el-option label="邮箱" value="EMAIL" />
+                      <el-option label="用户" value="USER" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="目标值">
+                    <el-input v-model="query.targetValue" placeholder="IP/邮箱/用户ID（模糊）" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="封禁用户ID">
+                    <el-input v-model="query.bannedUserId" placeholder="bannedUserId" clearable />
+                  </el-form-item>
+                </el-col>
+
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="关键词">
+                    <el-input v-model="query.keyword" placeholder="原因/目标等" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="管理员ID">
+                    <el-input v-model="query.adminId" placeholder="操作人ID" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="状态">
+                    <el-select v-model="query.status" placeholder="全部" clearable>
+                      <el-option label="全部" value="" />
+                      <el-option label="生效中" value="ACTIVE" />
+                      <el-option label="已解封（到期）" value="EXPIRED" />
+                      <el-option label="已解封（提前）" value="REVOKED" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="生效时间从">
+                    <el-date-picker
+                      v-model="query.effectiveFrom"
+                      type="datetime"
+                      value-format="YYYY-MM-DDTHH:mm"
+                      format="YYYY-MM-DD HH:mm"
+                      placeholder="开始时间"
+                      style="width: 100%"
+                      clearable
+                    />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="8">
+                  <el-form-item label="生效时间到">
+                    <el-date-picker
+                      v-model="query.effectiveTo"
+                      type="datetime"
+                      value-format="YYYY-MM-DDTHH:mm"
+                      format="YYYY-MM-DD HH:mm"
+                      placeholder="结束时间"
+                      style="width: 100%"
+                      clearable
+                    />
+                  </el-form-item>
+                </el-col>
+
+                <el-col :xs="24" :md="8">
+                  <el-form-item label=" ">
+                    <el-space wrap>
+                      <el-button type="primary" :loading="loading" @click="applyQuery">查询</el-button>
+                      <el-button :disabled="loading" @click="resetQuery">重置</el-button>
+                      <el-button :disabled="loading" @click="exportAll">导出CSV</el-button>
+                      <el-button :disabled="loading" @click="exportSelected">导出已选</el-button>
+                    </el-space>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" class="admin-card" body-style="padding: 0; overflow: hidden" style="margin-top: 12px">
+            <div class="admin-table-wrap">
+              <el-table
+                :data="pageData.items"
+                row-key="id"
+                border
+                table-layout="fixed"
+                :height="isMobile ? undefined : 520"
+                @selection-change="onSelectionChange"
+              >
+              <el-table-column type="selection" width="46" />
+              <el-table-column prop="id" label="ID" width="80" />
+              <el-table-column label="类型" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ formatTargetType(row.targetType) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="targetValue" label="目标值" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="bannedUserId" label="封禁用户ID" width="120">
+                <template #default="{ row }">{{ row.bannedUserId ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="昵称" width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ getBannedUserNickname(row.bannedUserId) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="140">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="String(row.status).toUpperCase() === 'ACTIVE' ? 'danger' : 'info'">
+                    {{ formatBanStatus(row.status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="!isNarrow" prop="effectiveAt" label="生效时间" width="170" show-overflow-tooltip />
+              <el-table-column v-if="!isNarrow" prop="expiresAt" label="到期时间" width="170" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.expiresAt ?? '永久' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="160">
+                <template #default="{ row }">
+                  <el-space>
+                    <el-button size="small" @click="openDetail(row.id)">详情</el-button>
+                    <el-button
+                      size="small"
+                      type="warning"
+                      :disabled="String(row.status).toUpperCase() !== 'ACTIVE' || loading"
+                      @click="unban(row.id)"
+                    >
+                      解封
+                    </el-button>
+                  </el-space>
+                </template>
+              </el-table-column>
+              </el-table>
+            </div>
+
+            <div class="admin-pager">
+              <div class="admin-pager-left">已选 {{ selectedIds.length }} 条</div>
+              <el-pagination
+                v-model:current-page="query.page"
+                v-model:page-size="query.size"
+                :total="pageData.total"
+                :page-sizes="[10, 20, 50, 100]"
+                :layout="paginationLayout"
+                @change="loadRecords"
+              />
+            </div>
+          </el-card>
+        </el-tab-pane>
+
+        <el-tab-pane label="封禁操作" name="ops">
+          <el-row :gutter="12">
+            <el-col :xs="24" :md="8">
+              <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+                <template #header>IP 封禁</template>
+                <el-form label-width="88px" class="admin-query-form">
+                  <el-form-item label="单个IP">
+                    <el-input v-model="ipForm.value" placeholder="203.0.113.1" clearable />
+                  </el-form-item>
+                  <el-form-item label="批量IP">
+                    <el-input v-model="ipForm.batch" type="textarea" :rows="4" placeholder="每行一个IP" />
+                  </el-form-item>
+                  <el-form-item label="时长">
+                    <el-select v-model="ipForm.durationSeconds" style="width: 100%">
+                      <el-option v-for="d in durations" :key="d.label" :label="d.label" :value="d.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="原因">
+                    <el-input v-model="ipForm.reason" placeholder="可选" clearable />
+                  </el-form-item>
+                  <el-form-item label=" ">
+                    <el-space wrap>
+                      <el-button type="primary" :loading="loading" @click="banIpSingle">封禁单个</el-button>
+                      <el-button type="warning" :loading="loading" @click="banIpBatch">批量封禁</el-button>
+                    </el-space>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+            </el-col>
+
+            <el-col :xs="24" :md="8">
+              <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+                <template #header>邮箱封禁</template>
+                <el-form label-width="88px" class="admin-query-form">
+                  <el-form-item label="单个邮箱">
+                    <el-input v-model="emailForm.value" placeholder="user@example.com" clearable />
+                  </el-form-item>
+                  <el-form-item label="批量邮箱">
+                    <el-input v-model="emailForm.batch" type="textarea" :rows="4" placeholder="每行一个邮箱" />
+                  </el-form-item>
+                  <el-form-item label="时长">
+                    <el-select v-model="emailForm.durationSeconds" style="width: 100%">
+                      <el-option v-for="d in durations" :key="d.label" :label="d.label" :value="d.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="原因">
+                    <el-input v-model="emailForm.reason" placeholder="可选" clearable />
+                  </el-form-item>
+                  <el-form-item label=" ">
+                    <el-space wrap>
+                      <el-button type="primary" :loading="loading" @click="banEmailSingle">封禁单个</el-button>
+                      <el-button type="warning" :loading="loading" @click="banEmailBatch">批量封禁</el-button>
+                    </el-space>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+            </el-col>
+
+            <el-col :xs="24" :md="8">
+              <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+                <template #header>用户封禁</template>
+                <el-form label-width="88px" class="admin-query-form">
+                  <el-form-item label="单个用户ID">
+                    <el-input v-model="userForm.userId" placeholder="1" clearable />
+                  </el-form-item>
+                  <el-form-item label="批量用户ID">
+                    <el-input v-model="userForm.batch" type="textarea" :rows="4" placeholder="每行一个用户ID" />
+                  </el-form-item>
+                  <el-form-item label="时长">
+                    <el-select v-model="userForm.durationSeconds" style="width: 100%">
+                      <el-option v-for="d in durations" :key="d.label" :label="d.label" :value="d.value" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="原因">
+                    <el-input v-model="userForm.reason" placeholder="可选" clearable />
+                  </el-form-item>
+                  <el-form-item label=" ">
+                    <el-space wrap>
+                      <el-button type="primary" :loading="loading" @click="banUserSingle">封禁单个</el-button>
+                      <el-button type="warning" :loading="loading" @click="banUserBatch">批量封禁</el-button>
+                    </el-space>
+                  </el-form-item>
+                </el-form>
+              </el-card>
+            </el-col>
+          </el-row>
+        </el-tab-pane>
+
+        <el-tab-pane label="用户查询与封禁" name="users">
+          <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+            <el-form label-width="72px" class="admin-query-form">
+              <el-row :gutter="12">
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="用户ID">
+                    <el-input v-model="userSearchForm.userId" placeholder="1" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="账号">
+                    <el-input v-model="userSearchForm.account" placeholder="admin" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="昵称">
+                    <el-input v-model="userSearchForm.nickname" placeholder="小明" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="邮箱">
+                    <el-input v-model="userSearchForm.email" placeholder="user@example.com" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="IP">
+                    <el-input v-model="userSearchForm.ip" placeholder="203.0.113.1" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="limit">
+                    <el-input-number v-model="userSearchForm.limit" :min="1" :max="200" style="width: 100%" />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :md="12">
+                  <el-form-item label="封禁原因">
+                    <el-input v-model="userOpForm.reason" placeholder="可选" clearable />
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :sm="12" :md="6">
+                  <el-form-item label="封禁时长">
+                    <el-select v-model="userOpForm.durationSeconds" style="width: 100%">
+                      <el-option v-for="d in durations" :key="d.label" :label="d.label" :value="d.value" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+                <el-col :xs="24" :md="6">
+                  <el-form-item label=" ">
+                    <el-button type="primary" :loading="loading" @click="searchUsers">查询用户</el-button>
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-form>
+          </el-card>
+
+          <el-card shadow="never" body-style="padding: 0; overflow: hidden" style="margin-top: 12px">
+            <el-table :data="userSearchResults" row-key="userId" border table-layout="fixed">
+              <el-table-column prop="userId" label="用户ID" width="90" />
+              <el-table-column prop="account" label="账号" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="nickname" label="昵称" min-width="120" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.nickname ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column prop="email" label="邮箱" min-width="200" show-overflow-tooltip />
+              <el-table-column label="状态" width="120">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ formatUserStatus(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="!isNarrow" prop="lastLoginIp" label="最近IP" width="160" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.lastLoginIp ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="360">
+                <template #default="{ row }">
+                  <el-space wrap>
+                    <el-button size="small" type="warning" :loading="loading" @click="banAssociatedIps(row.userId)">仅封关联IP</el-button>
+                    <el-button size="small" type="warning" :loading="loading" @click="banUserEmailOnly(row.userId)">仅封邮箱</el-button>
+                    <el-button size="small" type="danger" :loading="loading" @click="banUserFull(row.userId)">全封禁</el-button>
+                    <el-button size="small" :loading="loading" @click="unbanUserRelated(row.userId)">解除封禁</el-button>
+                  </el-space>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
+        </el-tab-pane>
+      </el-tabs>
+
+    <el-dialog v-model="detailVisible" title="封禁详情" width="900px">
+      <el-skeleton v-if="detailLoading" :rows="6" animated />
+      <div v-else>
+        <el-descriptions v-if="detailRecord" :column="isMobile ? 1 : 2" border>
+          <el-descriptions-item label="记录ID">{{ detailRecord.id }}</el-descriptions-item>
+          <el-descriptions-item label="目标类型">{{ formatTargetType(detailRecord.targetType) }}</el-descriptions-item>
+          <el-descriptions-item label="目标值">{{ detailRecord.targetValue }}</el-descriptions-item>
+          <el-descriptions-item label="封禁用户ID">{{ detailRecord.bannedUserId ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="昵称">{{ getBannedUserNickname(detailRecord.bannedUserId) }}</el-descriptions-item>
+          <el-descriptions-item label="管理员ID">{{ detailRecord.adminId }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ formatBanStatus(detailRecord.status) }}</el-descriptions-item>
+          <el-descriptions-item label="原因">{{ detailRecord.reason ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="时长(秒)">{{ detailRecord.durationSeconds ?? '永久' }}</el-descriptions-item>
+          <el-descriptions-item label="生效时间">{{ detailRecord.effectiveAt }}</el-descriptions-item>
+          <el-descriptions-item label="到期时间">{{ detailRecord.expiresAt ?? '永久' }}</el-descriptions-item>
+          <el-descriptions-item label="解封时间">{{ detailRecord.unbannedAt ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="解封类型">{{ formatUnbanType(detailRecord.unbanType) }}</el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider />
+        <div style="font-weight: 600; margin-bottom: 8px">操作日志</div>
+        <el-table :data="detailLogs" border table-layout="fixed">
+          <el-table-column prop="createdAt" label="时间" width="170" show-overflow-tooltip />
+          <el-table-column prop="actionType" label="类型" width="120">
+            <template #default="{ row }">{{ formatActionType(row.actionType) }}</template>
+          </el-table-column>
+          <el-table-column prop="actorId" label="操作人ID" width="120">
+            <template #default="{ row }">{{ row.actorId ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="actorRole" label="角色" width="140">
+            <template #default="{ row }">{{ row.actorRole ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="fromStatus" label="原状态" width="120">
+            <template #default="{ row }">{{ row.fromStatus ?? '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="toStatus" label="新状态" width="120" />
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="detailVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+  </div>
 </template>
-
-<style scoped>
-.page {
-  padding: 16px;
-  max-width: 1280px;
-  margin: 0 auto;
-}
-
-.page :deep(input),
-.page :deep(select),
-.page :deep(textarea) {
-  font: inherit;
-  font-size: 14px;
-  padding: 8px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  outline: none;
-}
-
-.page :deep(textarea) {
-  resize: vertical;
-}
-
-.page :deep(input:focus),
-.page :deep(select:focus),
-.page :deep(textarea:focus) {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
-}
-
-.page :deep(button) {
-  font: inherit;
-  font-size: 14px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  cursor: pointer;
-}
-
-.page :deep(button:hover) {
-  background: #f9fafb;
-}
-
-.page :deep(button:disabled) {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.recordsTable thead th {
-  position: sticky;
-  top: 0;
-  background: #ffffff;
-}
-
-.recordsTable,
-.userTable {
-  table-layout: fixed;
-}
-
-.recordsTable th,
-.recordsTable td,
-.userTable th,
-.userTable td {
-  word-break: break-all;
-}
-
-.recordsTable th:nth-child(4),
-.recordsTable td:nth-child(4) {
-  width: 220px;
-}
-
-@media (max-width: 640px) {
-  .page {
-    padding: 12px;
-  }
-}
-</style>

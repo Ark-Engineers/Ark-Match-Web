@@ -241,172 +241,192 @@ onMounted(async () => {
 </script>
 
 <template>
-  <main style="padding: 16px; max-width: 1100px; margin: 0 auto">
-    <header style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
+  <div class="admin-page">
+    <div class="admin-page-header">
       <div>
-        <div style="font-size: 20px; font-weight: 700">权限管理（仅超级管理员）</div>
-        <div style="opacity: 0.75">/admin/permission</div>
+        <div class="admin-title">权限管理</div>
       </div>
-      <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end">
-        <button @click="router.push('/admin/dashboard')" style="padding: 10px 12px">返回</button>
+      <div class="admin-header-actions">
+        <el-button type="primary" plain @click="router.push('/admin/dashboard')">返回</el-button>
       </div>
-    </header>
+    </div>
 
-    <p v-if="error" style="margin-top: 12px; color: #c00">{{ error }}</p>
+    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" style="margin-bottom: 12px" />
 
-    <section style="margin-top: 16px; border: 1px solid #eee; border-radius: 8px; padding: 12px">
-      <h2 style="margin: 0 0 12px; font-size: 16px">用户列表</h2>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-        <label style="display: grid; gap: 6px">
-          <span>关键词</span>
-          <input v-model.trim="userQuery.keyword" placeholder="账号/手机号/昵称/邮箱/用户ID" />
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>角色</span>
-          <select v-model="userQuery.role">
-            <option value="USER">普通用户</option>
-            <option value="ADMIN">管理员</option>
-            <option value="SUPER_ADMIN">超级管理员</option>
-          </select>
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>每页数量</span>
-          <select v-model.number="userQuery.size">
-            <option :value="10">10</option>
-            <option :value="20">20</option>
-            <option :value="50">50</option>
-          </select>
-        </label>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap">
-          <button @click="applyUserQuery" :disabled="loading" style="padding: 10px 12px">
-            {{ loading ? '加载中...' : '查询' }}
-          </button>
-        </div>
-      </div>
+    <el-tabs class="admin-tabs">
+      <el-tab-pane label="用户列表">
+        <el-card shadow="never" class="admin-card">
+          <el-form label-width="80px" class="admin-query-form" @submit.prevent>
+            <el-row :gutter="12">
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="关键词">
+                  <el-input v-model.trim="userQuery.keyword" clearable placeholder="账号/昵称/邮箱/用户ID" />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="角色">
+                  <el-select v-model="userQuery.role" style="width: 100%">
+                    <el-option label="普通用户" value="USER" />
+                    <el-option label="管理员" value="ADMIN" />
+                    <el-option label="超级管理员" value="SUPER_ADMIN" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="4">
+                <el-form-item label="每页">
+                  <el-select v-model.number="userQuery.size" style="width: 100%">
+                    <el-option :value="10" label="10" />
+                    <el-option :value="20" label="20" />
+                    <el-option :value="50" label="50" />
+                    <el-option :value="100" label="100" />
+                    <el-option :value="200" label="200" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="4">
+                <el-form-item label=" " label-width="0px">
+                  <el-button type="primary" :loading="loading" @click="applyUserQuery" style="width: 100%">查询</el-button>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </el-form>
+        </el-card>
 
-      <div style="margin-top: 12px; overflow-x: hidden">
-        <table style="width: 100%; border-collapse: collapse; table-layout: fixed">
-          <thead>
-            <tr>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 90px">用户ID</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 140px">账号/手机号</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 140px">昵称</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">邮箱</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 110px">角色</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 90px">状态</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 170px">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="u in userPage.items" :key="u.userId">
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ u.userId }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3; word-break: break-all">{{ u.account }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3; word-break: break-all">{{ u.nickname }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3; word-break: break-all">{{ u.email }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatRole(u.role) }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatUserStatus(u.status) }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">
-                <div style="display: flex; gap: 8px; flex-wrap: wrap">
-                  <button v-if="String(u.role || '').toUpperCase() === 'USER'" @click="grantAdmin(u.userId)" :disabled="loading" style="padding: 6px 8px">
-                    授权为管理员
-                  </button>
-                  <button v-else-if="String(u.role || '').toUpperCase() === 'ADMIN'" @click="revokeAdmin(u.userId)" :disabled="loading" style="padding: 6px 8px">
-                    撤销管理员
-                  </button>
-                  <span v-else style="opacity: 0.7">-</span>
-                </div>
-              </td>
-            </tr>
-            <tr v-if="!userPage.items.length">
-              <td colspan="7" style="padding: 12px; opacity: 0.7">暂无数据</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+        <el-card shadow="never" class="admin-card" style="margin-top: 12px">
+          <div class="admin-table-wrap">
+            <el-table :data="userPage.items" border height="540" table-layout="fixed" v-loading="loading">
+              <el-table-column prop="userId" label="用户ID" width="90" />
+              <el-table-column prop="account" label="账号" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="nickname" label="昵称" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="email" label="邮箱" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="role" label="角色" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="String(row.role).toUpperCase() === 'SUPER_ADMIN' ? 'danger' : String(row.role).toUpperCase() === 'ADMIN' ? 'warning' : 'info'">
+                    {{ formatRole(row.role) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="String(row.status).toUpperCase() === 'BANNED' ? 'danger' : String(row.status).toUpperCase() === 'SUSPENDED' ? 'warning' : 'success'">
+                    {{ formatUserStatus(row.status) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="190" fixed="right">
+                <template #default="{ row }">
+                  <div class="admin-row-actions">
+                    <el-button
+                      v-if="String(row.role || '').toUpperCase() === 'USER'"
+                      size="small"
+                      type="primary"
+                      plain
+                      :loading="loading"
+                      @click="grantAdmin(row.userId)"
+                    >
+                      授权管理员
+                    </el-button>
+                    <el-button
+                      v-else-if="String(row.role || '').toUpperCase() === 'ADMIN'"
+                      size="small"
+                      type="warning"
+                      plain
+                      :loading="loading"
+                      @click="revokeAdmin(row.userId)"
+                    >
+                      撤销管理员
+                    </el-button>
+                    <span v-else style="opacity: 0.7">-</span>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
 
-      <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div style="opacity: 0.75">共 {{ userPage.total }} 条</div>
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
-          <button @click="userPrevPage" :disabled="loading || userQuery.page <= 1" style="padding: 8px 10px">上一页</button>
-          <div>第 {{ userQuery.page }} / {{ userTotalPages }} 页</div>
-          <button @click="userNextPage" :disabled="loading || userQuery.page >= userTotalPages" style="padding: 8px 10px">下一页</button>
-        </div>
-      </div>
-    </section>
+          <div class="admin-pager">
+            <div class="admin-pager-left">
+              <span>共 {{ userPage.total }} 条</span>
+            </div>
+            <div class="admin-pager-right">
+              <el-button size="small" @click="userPrevPage" :disabled="loading || userQuery.page <= 1">上一页</el-button>
+              <span class="admin-page-no">{{ userQuery.page }} / {{ userTotalPages }}</span>
+              <el-button size="small" @click="userNextPage" :disabled="loading || userQuery.page >= userTotalPages">下一页</el-button>
+            </div>
+          </div>
+        </el-card>
+      </el-tab-pane>
 
-    <section style="margin-top: 16px; border: 1px solid #eee; border-radius: 8px; padding: 12px">
-      <h2 style="margin: 0 0 12px; font-size: 16px">授权操作日志</h2>
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: flex-end">
-        <label style="display: grid; gap: 6px">
-          <span>被操作用户ID</span>
-          <input v-model.trim="logQuery.targetUserId" placeholder="targetUserId（可空）" />
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>操作人ID</span>
-          <input v-model.trim="logQuery.actorId" placeholder="actorId（可空）" />
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>动作</span>
-          <select v-model="logQuery.actionType">
-            <option value="">全部</option>
-            <option value="GRANT_ADMIN">授权管理员</option>
-            <option value="REVOKE_ADMIN">撤销管理员</option>
-          </select>
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>起始时间</span>
-          <input v-model.trim="logQuery.fromTime" placeholder="2026-05-22T10:00" />
-        </label>
-        <label style="display: grid; gap: 6px">
-          <span>结束时间</span>
-          <input v-model.trim="logQuery.toTime" placeholder="2026-05-22T23:59" />
-        </label>
-        <div style="display: flex; gap: 10px; flex-wrap: wrap">
-          <button @click="applyLogQuery" :disabled="loading" style="padding: 10px 12px">
-            {{ loading ? '加载中...' : '查询' }}
-          </button>
-        </div>
-      </div>
+      <el-tab-pane label="授权日志">
+        <el-card shadow="never" class="admin-card">
+          <el-form label-width="90px" class="admin-query-form" @submit.prevent>
+            <el-row :gutter="12">
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="目标用户ID">
+                  <el-input v-model.trim="logQuery.targetUserId" clearable placeholder="targetUserId（可空）" />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="操作人ID">
+                  <el-input v-model.trim="logQuery.actorId" clearable placeholder="actorId（可空）" />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="动作">
+                  <el-select v-model="logQuery.actionType" clearable placeholder="全部" style="width: 100%">
+                    <el-option label="授权管理员" value="GRANT_ADMIN" />
+                    <el-option label="撤销管理员" value="REVOKE_ADMIN" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="起始时间">
+                  <el-input v-model.trim="logQuery.fromTime" clearable placeholder="2026-05-22T10:00" />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="6">
+                <el-form-item label="结束时间">
+                  <el-input v-model.trim="logQuery.toTime" clearable placeholder="2026-05-22T23:59" />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12" :md="8" :lg="4">
+                <el-form-item label=" " label-width="0px">
+                  <el-button type="primary" :loading="loading" @click="applyLogQuery" style="width: 100%">查询</el-button>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </el-form>
+        </el-card>
 
-      <div style="margin-top: 12px; overflow-x: hidden">
-        <table style="width: 100%; border-collapse: collapse; table-layout: fixed">
-          <thead>
-            <tr>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 160px">时间</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 120px">动作</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 100px">操作人ID</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 120px">操作人角色</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px; width: 120px">被操作用户ID</th>
-              <th style="text-align: left; border-bottom: 1px solid #eee; padding: 8px">角色变化</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="l in logPage.items" :key="l.id">
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ l.createdAt }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatActionType(l.actionType) }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ l.actorId ?? 'SYSTEM' }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ formatRole(l.actorRole) }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">{{ l.targetUserId }}</td>
-              <td style="padding: 8px; border-bottom: 1px solid #f3f3f3">
-                {{ formatRole(l.fromRole) }} -> {{ formatRole(l.toRole) }}
-              </td>
-            </tr>
-            <tr v-if="!logPage.items.length">
-              <td colspan="6" style="padding: 12px; opacity: 0.7">暂无日志</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+        <el-card shadow="never" class="admin-card" style="margin-top: 12px">
+          <div class="admin-table-wrap">
+            <el-table :data="logPage.items" border height="560" table-layout="fixed" v-loading="loading">
+              <el-table-column prop="createdAt" label="时间" min-width="170" show-overflow-tooltip />
+              <el-table-column prop="actionType" label="动作" width="140">
+                <template #default="{ row }">{{ formatActionType(row.actionType) }}</template>
+              </el-table-column>
+              <el-table-column prop="actorId" label="操作人ID" width="110" />
+              <el-table-column prop="actorRole" label="操作人角色" width="140">
+                <template #default="{ row }">{{ formatRole(row.actorRole) }}</template>
+              </el-table-column>
+              <el-table-column prop="targetUserId" label="目标用户ID" width="120" />
+              <el-table-column label="角色变化" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">{{ formatRole(row.fromRole) }} -> {{ formatRole(row.toRole) }}</template>
+              </el-table-column>
+            </el-table>
+          </div>
 
-      <div style="margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap">
-        <div style="opacity: 0.75">共 {{ logPage.total }} 条</div>
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
-          <button @click="logPrevPage" :disabled="loading || logQuery.page <= 1" style="padding: 8px 10px">上一页</button>
-          <div>第 {{ logQuery.page }} / {{ logTotalPages }} 页</div>
-          <button @click="logNextPage" :disabled="loading || logQuery.page >= logTotalPages" style="padding: 8px 10px">下一页</button>
-        </div>
-      </div>
-    </section>
-  </main>
+          <div class="admin-pager">
+            <div class="admin-pager-left">
+              <span>共 {{ logPage.total }} 条</span>
+            </div>
+            <div class="admin-pager-right">
+              <el-button size="small" @click="logPrevPage" :disabled="loading || logQuery.page <= 1">上一页</el-button>
+              <span class="admin-page-no">{{ logQuery.page }} / {{ logTotalPages }}</span>
+              <el-button size="small" @click="logNextPage" :disabled="loading || logQuery.page >= logTotalPages">下一页</el-button>
+            </div>
+          </div>
+        </el-card>
+      </el-tab-pane>
+    </el-tabs>
+  </div>
 </template>
-

@@ -67,6 +67,13 @@ arkMatchWeb 是一个基于 Vue 3 + Vite + TypeScript 的前端工程，已实�
 - Axios 封装：`src/api/request.ts`
 - 会自动在请求头注入 `Authorization: <tokenType> <accessToken>`（默认 Bearer）
 
+## 管理员后台 UI（Element UI / Element Plus）
+
+- 管理员后台页面统一使用 Element UI 体系组件库（Vue 3 对应 Element Plus）实现表单、表格、弹窗、分页等交互组件，保证后台界面风格与交互一致。
+- 当前项目采用“全量引入”方式注册组件库：
+  - 注册位置：`src/main.ts`
+  - 样式入口：`element-plus/dist/index.css`
+
 ## 本地开发（推荐流程）
 
 ### 0) 前置条件

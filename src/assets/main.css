@@ -3,13 +3,127 @@
     'Noto Sans', 'Liberation Sans', sans-serif;
   color: #111827;
   background: #ffffff;
+
+  --brand-blue: #4a90e2;
+  --brand-blue-100: #eaf4ff;
+  --brand-blue-200: #d6eaff;
+  --brand-blue-50: #f5faff;
+
+  --el-color-primary: var(--brand-blue);
+  --el-color-primary-dark-2: #2f6fb8;
+  --el-color-primary-light-3: #76a9ea;
+  --el-color-primary-light-5: #97bff0;
+  --el-color-primary-light-7: #b8d6f6;
+  --el-color-primary-light-8: #cce3f9;
+  --el-color-primary-light-9: #e6f2ff;
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: var(--brand-blue-50);
+  --el-border-color: #e5e7eb;
+  --el-border-color-light: #eef2f7;
+  --el-text-color-primary: #111827;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748b;
 }
 
 body {
   margin: 0;
+  background: var(--el-bg-color-page);
 }
 
 a {
   color: inherit;
 }
 
+.admin-page {
+  padding: 16px;
+  overflow-x: hidden;
+}
+
+.admin-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #173b6c;
+}
+
+.admin-header-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.admin-tabs .el-tabs__header {
+  margin-bottom: 12px;
+}
+
+.admin-tabs .el-tabs__nav-wrap::after {
+  height: 1px;
+  background-color: var(--brand-blue-200);
+}
+
+.admin-page .el-table {
+  --el-table-border-color: #eef2f7;
+  --el-table-header-bg-color: var(--brand-blue-50);
+  --el-table-header-text-color: #334155;
+}
+
+.admin-page .el-table__body-wrapper,
+.admin-page .el-table__header-wrapper {
+  overflow-x: hidden;
+}
+
+.admin-query-form .el-form-item {
+  margin-bottom: 10px;
+}
+
+.admin-card {
+  border-radius: 10px;
+  border: 1px solid rgba(59, 130, 246, 0.18);
+  background: #ffffff;
+}
+
+.admin-table-wrap {
+  overflow-x: hidden;
+}
+
+.admin-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-pager {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-pager-left {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  opacity: 0.9;
+}
+
+.admin-pager-right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-page-no {
+  font-size: 12px;
+  opacity: 0.8;
+}
