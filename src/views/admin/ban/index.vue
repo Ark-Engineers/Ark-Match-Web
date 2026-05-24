@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { http, request } from '@/api'
@@ -55,6 +56,8 @@ const durations = [
   { label: '30天', value: 2592000 },
   { label: '永久', value: null },
 ] as const
+
+const router = useRouter()
 
 const activeTab = ref<'records' | 'ops' | 'users'>('records')
 

@@ -49,6 +49,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         component: () => import('@/views/admin/placeholder/index.vue'),
         meta: { requiresAuth: true, role: 'ADMIN', title: '系统设置' },
       },
+      {
+        path: 'profile',
+        name: 'admin-profile',
+        component: () => import('@/views/user/profile/index.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN', title: '个人信息' },
+      },
     ],
   },
 ]

@@ -7,6 +7,18 @@ export const userRoutes: RouteRecordRaw[] = [
     redirect: '/home',
   },
   {
+    path: '/user/profile',
+    name: 'user-profile',
+    component: () => import('@/views/user/profile/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/user/profile/:userId',
+    name: 'user-profile-view',
+    component: () => import('@/views/user/profile/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/user/appeal',
     name: 'user-appeal',
     component: () => import('@/views/user/appeal/index.vue'),

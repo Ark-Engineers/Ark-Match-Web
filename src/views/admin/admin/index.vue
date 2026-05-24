@@ -99,6 +99,19 @@ const activeMenu = computed(() => route.path)
 
 const asideWidth = '220px'
 
+const watermark = computed(() => {
+  const p = route.path
+  if (p.startsWith('/admin/dashboard')) return 'ADMIN CENTER'
+  if (p.startsWith('/admin/notice')) return 'NOTICE'
+  if (p.startsWith('/admin/ban')) return 'BAN'
+  if (p.startsWith('/admin/m/1')) return 'USERS'
+  if (p.startsWith('/admin/permission')) return 'PERMISSION'
+  if (p.startsWith('/admin/overview')) return 'OVERVIEW'
+  if (p.startsWith('/admin/settings')) return 'SETTINGS'
+  if (p.startsWith('/admin/profile')) return 'PROFILE'
+  return 'ADMIN'
+})
+
 function updateResponsiveState(): void {
   const mobile = window.innerWidth < 1024
   isMobile.value = mobile
@@ -171,6 +184,10 @@ async function goUserHome(): Promise<void> {
   await router.push('/home')
 }
 
+async function goProfile(): Promise<void> {
+  await router.push('/admin/profile')
+}
+
 function onMenuSelect(): void {
   if (isMobile.value) closeDrawer()
 }
@@ -179,15 +196,20 @@ onMounted(() => {
   updateResponsiveState()
   window.addEventListener('resize', updateResponsiveState)
   void loadCurrentUserNickname()
+  document.body.classList.add('ark-admin')
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateResponsiveState)
+  document.body.classList.remove('ark-admin')
 })
 </script>
 
 <template>
-  <el-container class="admin-layout">
+  <div class="ark-admin-bg" aria-hidden="true" />
+  <div class="ark-admin-watermark" aria-hidden="true">{{ watermark }}</div>
+
+  <el-container class="admin-layout ark-admin-layout">
     <el-header class="admin-header">
       <div class="admin-header__left">
         <div class="admin-brand">后台管理</div>
@@ -208,6 +230,7 @@ onBeforeUnmount(() => {
               <el-dropdown-item disabled>昵称：{{ nickname }}</el-dropdown-item>
               <el-dropdown-item disabled>身份：{{ roleLabel }}</el-dropdown-item>
               <el-dropdown-item disabled>用户ID：{{ userId ?? '—' }}</el-dropdown-item>
+              <el-dropdown-item divided @click="goProfile">个人信息</el-dropdown-item>
               <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
             </el-dropdown-menu>
           </template>
@@ -221,9 +244,9 @@ onBeforeUnmount(() => {
           class="admin-menu"
           :default-active="activeMenu"
           router
-          background-color="#eaf4ff"
-          text-color="#334155"
-          active-text-color="#1d4ed8"
+          background-color="#ffffff"
+          text-color="#0f172a"
+          active-text-color="#0ea5e9"
           :unique-opened="true"
           @select="onMenuSelect"
         >
@@ -248,9 +271,9 @@ onBeforeUnmount(() => {
         class="admin-menu"
         :default-active="activeMenu"
         router
-        background-color="#eaf4ff"
-        text-color="#334155"
-        active-text-color="#1d4ed8"
+        background-color="#ffffff"
+        text-color="#0f172a"
+        active-text-color="#0ea5e9"
         :unique-opened="true"
         @select="onMenuSelect"
       >
@@ -272,14 +295,74 @@ onBeforeUnmount(() => {
   min-height: 100vh;
 }
 
+.ark-admin-layout {
+  position: relative;
+  z-index: 1;
+}
+
+.ark-admin-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 12% 18%, rgba(14, 165, 233, 0.14), transparent 60%),
+    radial-gradient(760px 440px at 88% 12%, rgba(34, 211, 238, 0.12), transparent 60%),
+    radial-gradient(1200px 700px at 60% 85%, rgba(59, 130, 246, 0.1), transparent 65%),
+    linear-gradient(180deg, #ffffff 0%, #f6fbff 55%, #ffffff 100%);
+}
+
+.ark-admin-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(14, 165, 233, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(14, 165, 233, 0.12) 1px, transparent 1px);
+  background-size: 72px 72px;
+  opacity: 0.22;
+  mask-image: radial-gradient(circle at 40% 30%, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.6) 45%, transparent 72%);
+}
+
+.ark-admin-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1px 1px at 12% 22%, rgba(15, 23, 42, 0.22) 0, transparent 55%),
+    radial-gradient(1px 1px at 28% 38%, rgba(15, 23, 42, 0.14) 0, transparent 55%),
+    radial-gradient(1px 1px at 44% 18%, rgba(15, 23, 42, 0.12) 0, transparent 55%),
+    radial-gradient(1px 1px at 66% 28%, rgba(15, 23, 42, 0.14) 0, transparent 55%),
+    radial-gradient(1px 1px at 78% 46%, rgba(15, 23, 42, 0.1) 0, transparent 55%),
+    radial-gradient(1px 1px at 92% 18%, rgba(15, 23, 42, 0.12) 0, transparent 55%);
+  opacity: 0.38;
+}
+
+.ark-admin-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(56px, 7vw, 120px);
+  font-weight: 800;
+  letter-spacing: 10px;
+  color: rgba(15, 23, 42, 0.06);
+  text-transform: uppercase;
+  user-select: none;
+}
+
 .admin-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 64px;
-  background: #ffffff;
-  color: #111827;
-  border-bottom: 1px solid #d6eaff;
+  background: rgba(255, 255, 255, 0.78);
+  color: #0f172a;
+  border-bottom: 1px solid rgba(14, 165, 233, 0.22);
+  backdrop-filter: blur(10px);
 }
 
 .admin-header__left {
@@ -291,7 +374,8 @@ onBeforeUnmount(() => {
 .admin-brand {
   font-size: 16px;
   font-weight: 600;
-  color: #1d4ed8;
+  color: rgba(2, 132, 199, 0.92);
+  letter-spacing: 1px;
 }
 
 .admin-header__right {
@@ -309,12 +393,12 @@ onBeforeUnmount(() => {
   cursor: pointer;
   user-select: none;
   color: #0f172a;
-  background: #ffffff;
-  border: 1px solid #d6eaff;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(14, 165, 233, 0.22);
 }
 
 .admin-user-trigger:hover {
-  background: #f5faff;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .admin-user-trigger__text {
@@ -345,8 +429,9 @@ onBeforeUnmount(() => {
 }
 
 .admin-aside {
-  background: #eaf4ff;
-  border-right: 1px solid #d6eaff;
+  background: rgba(255, 255, 255, 0.78);
+  border-right: 1px solid rgba(14, 165, 233, 0.18);
+  backdrop-filter: blur(10px);
 }
 
 .admin-menu {
@@ -356,18 +441,18 @@ onBeforeUnmount(() => {
 }
 
 .admin-main {
-  background: #f5faff;
+  background: transparent;
   padding: 16px 16px 22px;
   overflow-x: hidden;
 }
 
 :deep(.el-menu-item.is-active) {
-  background: #d6eaff;
+  background: rgba(14, 165, 233, 0.12);
 }
 
 :deep(.el-sub-menu__title:hover),
 :deep(.el-menu-item:hover) {
-  background: #e6f2ff;
+  background: rgba(14, 165, 233, 0.08);
 }
 
 @media (max-width: 1023px) {

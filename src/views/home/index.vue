@@ -83,6 +83,10 @@ async function goMyBanRecords(): Promise<void> {
   await router.push('/user/ban-records')
 }
 
+async function goMyProfile(): Promise<void> {
+  await router.push('/user/profile')
+}
+
 async function goAppeal(): Promise<void> {
   await router.push('/user/appeal')
 }
@@ -172,6 +176,7 @@ onMounted(() => {
 
       <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end">
         <button v-if="isAdmin" @click="goAdmin" style="padding: 10px 12px">系统管理入口</button>
+        <button @click="goMyProfile" style="padding: 10px 12px">个人信息</button>
         <button @click="goMyBanRecords" style="padding: 10px 12px">我的封禁记录</button>
         <button @click="goAppeal" style="padding: 10px 12px">申诉入口</button>
         <button @click="logout" :disabled="loading" style="padding: 10px 12px">

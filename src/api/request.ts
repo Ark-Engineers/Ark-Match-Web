@@ -3,6 +3,7 @@ import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig, ty
 import { API_BASE_URL } from '@/config'
 import { STORAGE_KEYS } from '@/constants/storage-keys'
 import { getJson, remove } from '@/utils/storage'
+import { handleBanBlockedIfNeeded } from '@/utils/ban-block'
 
 export const http: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -23,7 +24,9 @@ http.interceptors.request.use((config) => {
 
 http.interceptors.response.use(
   (response: AxiosResponse) => response,
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
+    const anyData = error.response?.data as any
+    await handleBanBlockedIfNeeded(anyData)
     if (error.response?.status === 401) {
       remove(STORAGE_KEYS.authSession)
       try {

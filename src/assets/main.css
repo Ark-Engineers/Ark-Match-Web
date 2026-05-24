@@ -35,6 +35,89 @@ a {
   color: inherit;
 }
 
+body.ark-admin {
+  --ark-cyan: #0ea5e9;
+  --ark-cyan-2: rgba(14, 165, 233, 0.18);
+  --ark-panel: rgba(255, 255, 255, 0.86);
+  --ark-panel-solid: #ffffff;
+  --ark-text: #0f172a;
+  --ark-text-2: rgba(15, 23, 42, 0.72);
+  --ark-text-3: rgba(15, 23, 42, 0.52);
+
+  color: var(--ark-text);
+  background: #ffffff;
+
+  --el-color-primary: var(--ark-cyan);
+  --el-color-primary-dark-2: #0284c7;
+  --el-color-primary-light-3: rgba(14, 165, 233, 0.72);
+  --el-color-primary-light-5: rgba(14, 165, 233, 0.46);
+  --el-color-primary-light-7: rgba(14, 165, 233, 0.28);
+  --el-color-primary-light-8: rgba(14, 165, 233, 0.18);
+  --el-color-primary-light-9: rgba(14, 165, 233, 0.12);
+
+  --el-bg-color: rgba(255, 255, 255, 0.86);
+  --el-bg-color-page: transparent;
+  --el-border-color: rgba(14, 165, 233, 0.18);
+  --el-border-color-light: rgba(14, 165, 233, 0.12);
+  --el-text-color-primary: var(--ark-text);
+  --el-text-color-regular: var(--ark-text-2);
+  --el-text-color-secondary: var(--ark-text-3);
+  --el-fill-color-blank: rgba(255, 255, 255, 0.9);
+  --el-fill-color-light: rgba(255, 255, 255, 0.86);
+  --el-fill-color: rgba(255, 255, 255, 0.8);
+  --el-mask-color: rgba(15, 23, 42, 0.32);
+}
+
+body.ark-admin .admin-title {
+  color: rgba(230, 243, 255, 0.9);
+  letter-spacing: 0.5px;
+}
+
+body.ark-admin .admin-card {
+  border-radius: 12px;
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+body.ark-admin .admin-page {
+  padding: 16px;
+  overflow-x: hidden;
+}
+
+body.ark-admin .admin-tabs .el-tabs__nav-wrap::after {
+  background-color: rgba(88, 221, 255, 0.18);
+}
+
+body.ark-admin .admin-page .el-table {
+  --el-table-border-color: rgba(14, 165, 233, 0.14);
+  --el-table-header-bg-color: rgba(14, 165, 233, 0.08);
+  --el-table-header-text-color: rgba(15, 23, 42, 0.86);
+  --el-table-row-hover-bg-color: rgba(14, 165, 233, 0.06);
+  --el-table-bg-color: rgba(255, 255, 255, 0.9);
+  --el-table-text-color: rgba(15, 23, 42, 0.82);
+}
+
+body.ark-admin .admin-page .el-alert {
+  --el-alert-bg-color: rgba(255, 255, 255, 0.86);
+  --el-alert-border-color: rgba(14, 165, 233, 0.18);
+}
+
+body.ark-admin .admin-page .el-input__wrapper,
+body.ark-admin .admin-page .el-textarea__inner {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.14) inset;
+}
+
+body.ark-admin .admin-page .el-input__wrapper.is-focus,
+body.ark-admin .admin-page .el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.28) inset;
+}
+
+body.ark-admin .admin-page .el-pagination {
+  --el-pagination-button-bg-color: rgba(255, 255, 255, 0.86);
+  --el-pagination-hover-color: rgba(2, 132, 199, 0.92);
+}
+
 .admin-page {
   padding: 16px;
   overflow-x: hidden;
