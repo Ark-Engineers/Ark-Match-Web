@@ -32,6 +32,24 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, role: 'ADMIN' },
       },
       {
+        path: 'm/2',
+        name: 'admin-questionnaire',
+        component: () => import('@/views/admin/questionnaire/index.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
+      {
+        path: 'm/2/:id',
+        name: 'admin-questionnaire-edit',
+        component: () => import('@/views/admin/questionnaire/edit.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
+      {
+        path: 'm/2/:id/preview',
+        name: 'admin-questionnaire-preview',
+        component: () => import('@/views/admin/questionnaire/preview.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
+      {
         path: 'permission',
         name: 'admin-permission',
         component: () => import('@/views/admin/permission/index.vue'),

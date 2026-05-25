@@ -72,6 +72,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
         { index: '/admin/dashboard', label: '后台首页', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/notice', label: '公告管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/m/1', label: '用户管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { index: '/admin/m/2', label: '问卷管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/ban', label: '封禁管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
       ],
     },
@@ -95,7 +96,12 @@ const menuGroups = computed<MenuGroup[]>(() => {
     .filter((g) => g.items.length > 0)
 })
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => {
+  const p = route.path
+  if (p.startsWith('/admin/m/1')) return '/admin/m/1'
+  if (p.startsWith('/admin/m/2')) return '/admin/m/2'
+  return p
+})
 
 const asideWidth = '220px'
 
@@ -105,6 +111,7 @@ const watermark = computed(() => {
   if (p.startsWith('/admin/notice')) return 'NOTICE'
   if (p.startsWith('/admin/ban')) return 'BAN'
   if (p.startsWith('/admin/m/1')) return 'USERS'
+  if (p.startsWith('/admin/m/2')) return 'QUESTIONNAIRE'
   if (p.startsWith('/admin/permission')) return 'PERMISSION'
   if (p.startsWith('/admin/overview')) return 'OVERVIEW'
   if (p.startsWith('/admin/settings')) return 'SETTINGS'
