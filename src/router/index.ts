@@ -16,6 +16,7 @@ function resolveHomePath(role: unknown): string {
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
+  auth.ensureSessionValid()
 
   if (to.meta?.guestOnly && auth.isAuthenticated) {
     return resolveHomePath(auth.role)

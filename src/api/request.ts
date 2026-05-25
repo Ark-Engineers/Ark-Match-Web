@@ -5,13 +5,34 @@ import { STORAGE_KEYS } from '@/constants/storage-keys'
 import { getJson, remove } from '@/utils/storage'
 import { handleBanBlockedIfNeeded } from '@/utils/ban-block'
 
+type StoredAuthSession = {
+  value?: { tokenType?: string; accessToken?: string }
+  expireAt?: number
+  tokenType?: string
+  accessToken?: string
+}
+
 export const http: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
 })
 
 http.interceptors.request.use((config) => {
-  const session = getJson<{ tokenType?: string; accessToken?: string }>(STORAGE_KEYS.authSession)
+  const raw = getJson<StoredAuthSession>(STORAGE_KEYS.authSession)
+  const expireAt = Number(raw?.expireAt ?? 0)
+  if (expireAt > 0 && Date.now() >= expireAt) {
+    remove(STORAGE_KEYS.authSession)
+    try {
+      localStorage.removeItem('token')
+      localStorage.removeItem('accessToken')
+      localStorage.removeItem('refreshToken')
+      localStorage.removeItem('user')
+      sessionStorage.clear()
+    } catch {}
+    return config
+  }
+
+  const session = raw?.value ?? raw
   if (!session?.accessToken) return config
 
   const tokenType = session.tokenType || 'Bearer'
@@ -30,6 +51,10 @@ http.interceptors.response.use(
     if (error.response?.status === 401) {
       remove(STORAGE_KEYS.authSession)
       try {
+        localStorage.removeItem('token')
+        localStorage.removeItem('accessToken')
+        localStorage.removeItem('refreshToken')
+        localStorage.removeItem('user')
         sessionStorage.clear()
       } catch {}
     }
