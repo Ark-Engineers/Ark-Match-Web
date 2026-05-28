@@ -77,6 +77,13 @@ body.ark-admin .admin-card {
   border-radius: 12px;
   border: 1px solid rgba(14, 165, 233, 0.18);
   background: rgba(255, 255, 255, 0.86);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+body.ark-admin .admin-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
+  border-color: rgba(14, 165, 233, 0.3);
 }
 
 body.ark-admin .admin-page {
@@ -209,4 +216,68 @@ body.ark-admin .admin-page .el-pagination {
 .admin-page-no {
   font-size: 12px;
   opacity: 0.8;
+}
+
+body.ark-admin .admin-animate-in {
+  animation: adminFadeUp 260ms ease both;
+  animation-delay: var(--delay, 0ms);
+}
+
+@keyframes adminFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.admin-collapse-enter-active,
+.admin-collapse-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.admin-collapse-enter-from,
+.admin-collapse-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.admin-collapse-enter-to,
+.admin-collapse-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+body.ark-admin .admin-row-actions .el-button {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+body.ark-admin .admin-row-actions .el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.ark-admin .admin-card {
+    transition: none;
+  }
+
+  body.ark-admin .admin-card:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  body.ark-admin .admin-animate-in {
+    animation: none;
+  }
+
+  .admin-collapse-enter-active,
+  .admin-collapse-leave-active {
+    transition: none;
+  }
 }

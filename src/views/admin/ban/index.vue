@@ -844,7 +844,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="admin-page">
-    <div class="admin-page-header">
+    <div class="admin-page-header admin-animate-in" style="--delay: 0ms">
       <div>
         <div class="admin-title">封禁管理</div>
       </div>
@@ -865,7 +865,7 @@ onBeforeUnmount(() => {
 
       <el-tabs v-model="activeTab" class="admin-tabs">
         <el-tab-pane label="封禁记录" name="records">
-          <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+          <el-card shadow="never" class="admin-card admin-animate-in" body-style="padding: 16px" style="--delay: 60ms">
             <el-form label-width="88px" class="admin-query-form">
               <el-row :gutter="12">
                 <el-col :xs="24" :sm="12" :md="8">
@@ -951,7 +951,12 @@ onBeforeUnmount(() => {
             </el-form>
           </el-card>
 
-          <el-card shadow="never" class="admin-card" body-style="padding: 0; overflow: hidden" style="margin-top: 12px">
+          <el-card
+            shadow="never"
+            class="admin-card admin-animate-in"
+            body-style="padding: 0; overflow: hidden"
+            style="margin-top: 12px; --delay: 100ms"
+          >
             <div class="admin-table-wrap">
               <el-table
                 :data="pageData.items"

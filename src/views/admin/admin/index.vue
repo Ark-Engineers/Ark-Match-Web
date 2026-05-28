@@ -269,7 +269,13 @@ onBeforeUnmount(() => {
       </el-aside>
 
       <el-main class="admin-main">
-        <RouterView />
+        <RouterView v-slot="{ Component, route: viewRoute }">
+          <Transition name="admin-page" mode="out-in">
+            <div class="admin-page-shell" :key="viewRoute.fullPath">
+              <component :is="Component" />
+            </div>
+          </Transition>
+        </RouterView>
       </el-main>
     </el-container>
 
@@ -402,10 +408,13 @@ onBeforeUnmount(() => {
   color: #0f172a;
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(14, 165, 233, 0.22);
+  transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
 .admin-user-trigger:hover {
   background: rgba(255, 255, 255, 0.96);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.12);
 }
 
 .admin-user-trigger__text {
@@ -453,6 +462,43 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
 }
 
+.admin-page-shell {
+  min-height: calc(100vh - 64px - 16px - 22px);
+}
+
+:deep(.admin-header .el-button) {
+  transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+:deep(.admin-header .el-button:hover) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.12);
+}
+
+:deep(.el-sub-menu__title),
+:deep(.el-menu-item) {
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.admin-page-enter-active,
+.admin-page-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease, filter 180ms ease;
+}
+
+.admin-page-enter-from,
+.admin-page-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+  filter: blur(3px);
+}
+
+.admin-page-leave-from,
+.admin-page-enter-to {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+
 :deep(.el-menu-item.is-active) {
   background: rgba(14, 165, 233, 0.12);
 }
@@ -460,6 +506,43 @@ onBeforeUnmount(() => {
 :deep(.el-sub-menu__title:hover),
 :deep(.el-menu-item:hover) {
   background: rgba(14, 165, 233, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-user-trigger {
+    transition: none;
+  }
+
+  .admin-user-trigger:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  :deep(.admin-header .el-button) {
+    transition: none;
+  }
+
+  :deep(.admin-header .el-button:hover) {
+    transform: none;
+    box-shadow: none;
+  }
+
+  :deep(.el-sub-menu__title),
+  :deep(.el-menu-item) {
+    transition: none;
+  }
+
+  .admin-page-enter-active,
+  .admin-page-leave-active {
+    transition: none;
+  }
+
+  .admin-page-enter-from,
+  .admin-page-leave-to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
 
 @media (max-width: 1023px) {

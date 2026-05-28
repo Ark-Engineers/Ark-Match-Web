@@ -190,10 +190,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div style="padding: 16px">
-    <el-card shadow="never">
+  <div class="admin-page">
+    <el-card shadow="never" class="admin-card admin-animate-in" style="--delay: 40ms">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <div
+          class="admin-animate-in"
+          style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; --delay: 0ms"
+        >
           <div>
             <div style="font-weight: 700">问卷管理</div>
             <div style="font-size: 12px; opacity: 0.7">导入Excel生成问卷，支持预览交互与打印/PDF导出</div>

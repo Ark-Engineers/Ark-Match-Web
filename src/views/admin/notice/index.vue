@@ -402,7 +402,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="admin-page">
-    <div class="admin-page-header">
+    <div class="admin-page-header admin-animate-in" style="--delay: 0ms">
       <div>
         <div class="admin-title">公告管理</div>
       </div>
@@ -413,7 +413,7 @@ onBeforeUnmount(() => {
 
     <el-alert v-if="error" type="error" :title="error" show-icon :closable="true" @close="error = ''" style="margin-bottom: 12px" />
 
-    <el-card shadow="never" class="admin-card" body-style="padding: 16px">
+    <el-card shadow="never" class="admin-card admin-animate-in" body-style="padding: 16px" style="--delay: 60ms">
         <el-row :gutter="12" align="middle">
           <el-col :xs="24" :md="10">
             <el-input v-model="query.keyword" placeholder="标题/内容关键词（模糊/全文）" clearable />
@@ -451,9 +451,14 @@ onBeforeUnmount(() => {
         </el-row>
     </el-card>
 
-    <el-card shadow="never" class="admin-card" body-style="padding: 0; overflow: hidden" style="margin-top: 12px">
+    <el-card
+      shadow="never"
+      class="admin-card admin-animate-in"
+      body-style="padding: 0; overflow: hidden"
+      style="margin-top: 12px; --delay: 100ms"
+    >
       <div class="admin-table-wrap">
-        <el-table :data="pageData.items" border table-layout="fixed" :height="isMobile ? undefined : 560">
+        <el-table :data="pageData.items" border table-layout="fixed" :height="isMobile ? undefined : 560" v-loading="loading">
           <el-table-column prop="id" label="ID" width="90" />
           <el-table-column prop="title" label="标题" min-width="260" show-overflow-tooltip />
           <el-table-column label="等级" width="90">

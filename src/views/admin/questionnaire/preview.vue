@@ -235,10 +235,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div style="padding: 16px">
-    <el-card shadow="never" v-loading="loading">
+  <div class="admin-page">
+    <el-card shadow="never" class="admin-card admin-animate-in" style="--delay: 40ms" v-loading="loading">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <div
+          class="admin-animate-in"
+          style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; --delay: 0ms"
+        >
           <div>
             <div style="font-weight: 700">问卷预览</div>
             <div style="font-size: 12px; opacity: 0.7">问卷ID：{{ id }}</div>
@@ -252,7 +255,7 @@ onMounted(async () => {
         </div>
       </template>
 
-      <div ref="previewRef" style="max-width: 860px; margin: 0 auto">
+      <div ref="previewRef" class="admin-animate-in" style="max-width: 860px; margin: 0 auto; --delay: 80ms">
         <div style="text-align: center; margin: 10px 0 18px">
           <div style="font-size: 22px; font-weight: 800">{{ data?.title || '' }}</div>
           <div v-if="data?.subtitle" style="opacity: 0.8; margin-top: 6px">{{ data.subtitle }}</div>

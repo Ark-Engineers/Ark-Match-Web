@@ -242,7 +242,7 @@ onMounted(async () => {
 
 <template>
   <div class="admin-page">
-    <div class="admin-page-header">
+    <div class="admin-page-header admin-animate-in" style="--delay: 0ms">
       <div>
         <div class="admin-title">权限管理</div>
       </div>
@@ -255,7 +255,7 @@ onMounted(async () => {
 
     <el-tabs class="admin-tabs">
       <el-tab-pane label="用户列表">
-        <el-card shadow="never" class="admin-card">
+        <el-card shadow="never" class="admin-card admin-animate-in" style="--delay: 60ms">
           <el-form label-width="80px" class="admin-query-form" @submit.prevent>
             <el-row :gutter="12">
               <el-col :xs="24" :sm="12" :md="8" :lg="6">
@@ -292,7 +292,7 @@ onMounted(async () => {
           </el-form>
         </el-card>
 
-        <el-card shadow="never" class="admin-card" style="margin-top: 12px">
+        <el-card shadow="never" class="admin-card admin-animate-in" style="margin-top: 12px; --delay: 100ms">
           <div class="admin-table-wrap">
             <el-table :data="userPage.items" border height="540" table-layout="fixed" v-loading="loading">
               <el-table-column prop="userId" label="用户ID" width="90" />

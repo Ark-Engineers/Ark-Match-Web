@@ -312,10 +312,13 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div style="padding: 16px">
-    <el-card shadow="never" v-loading="loading">
+  <div class="admin-page">
+    <el-card shadow="never" class="admin-card admin-animate-in" style="--delay: 40ms" v-loading="loading">
       <template #header>
-        <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap">
+        <div
+          class="admin-animate-in"
+          style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; --delay: 0ms"
+        >
           <div>
             <div style="font-weight: 700">编辑问卷</div>
             <div style="font-size: 12px; opacity: 0.7">问卷ID：{{ id }}</div>
@@ -345,7 +348,7 @@ onMounted(async () => {
         </el-space>
       </div>
 
-      <el-table :data="rows" border table-layout="fixed">
+      <el-table :data="rows" border table-layout="fixed" class="admin-animate-in" style="--delay: 80ms">
         <el-table-column prop="seq" label="序号" width="70" />
         <el-table-column label="问题" min-width="220">
           <template #default="{ row }">

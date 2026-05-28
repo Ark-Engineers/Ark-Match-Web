@@ -739,7 +739,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="admin-page">
-    <div class="admin-page-header">
+    <div class="admin-page-header admin-animate-in" style="--delay: 0ms">
       <div>
         <div class="admin-title">用户管理</div>
       </div>
@@ -752,7 +752,7 @@ onBeforeUnmount(() => {
 
     <el-tabs v-model="activeTab" class="admin-tabs">
       <el-tab-pane label="用户列表" name="users">
-        <el-card shadow="never" class="admin-card">
+        <el-card shadow="never" class="admin-card admin-animate-in" style="--delay: 60ms">
           <el-form label-width="90px" class="admin-query-form" @submit.prevent>
             <el-row :gutter="12">
               <el-col :xs="24" :sm="12" :md="8" :lg="6">
@@ -760,18 +760,22 @@ onBeforeUnmount(() => {
                   <el-input v-model="userQuery.keyword" clearable placeholder="账号/邮箱/昵称/ID" @keyup.enter="applyUserQuery" />
                 </el-form-item>
               </el-col>
-              <template v-if="!isNarrow || showAdvanced">
-                <el-col :xs="24" :sm="12" :md="8" :lg="6">
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="8" :lg="6">
                   <el-form-item label="账号">
                     <el-input v-model="userQuery.account" clearable placeholder="模糊匹配" @keyup.enter="applyUserQuery" />
                   </el-form-item>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="8" :lg="6">
+              </Transition>
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="8" :lg="6">
                   <el-form-item label="昵称">
                     <el-input v-model="userQuery.nickname" clearable placeholder="模糊匹配" @keyup.enter="applyUserQuery" />
                   </el-form-item>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="8" :lg="6">
+              </Transition>
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="8" :lg="6">
                   <el-form-item label="角色">
                     <el-select v-model="userQuery.role" clearable placeholder="全部" style="width: 100%">
                       <el-option label="普通用户" value="USER" />
@@ -780,7 +784,9 @@ onBeforeUnmount(() => {
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="8" :lg="6">
+              </Transition>
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="8" :lg="6">
                   <el-form-item label="状态">
                     <el-select v-model="userQuery.status" clearable placeholder="全部" style="width: 100%">
                       <el-option label="正常" value="NORMAL" />
@@ -789,7 +795,9 @@ onBeforeUnmount(() => {
                     </el-select>
                   </el-form-item>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="12" :lg="10">
+              </Transition>
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="12" :lg="10">
                   <el-form-item label="注册时间">
                     <el-date-picker
                       v-model="userQuery.createdRange"
@@ -802,12 +810,14 @@ onBeforeUnmount(() => {
                     />
                   </el-form-item>
                 </el-col>
-                <el-col :xs="24" :sm="12" :md="6" :lg="4">
+              </Transition>
+              <Transition name="admin-collapse">
+                <el-col v-if="!isNarrow || showAdvanced" :xs="24" :sm="12" :md="6" :lg="4">
                   <el-form-item label="已注销">
                     <el-switch v-model="userQuery.includeDeleted" :active-value="1" :inactive-value="0" />
                   </el-form-item>
                 </el-col>
-              </template>
+              </Transition>
               <el-col :xs="24" :sm="24" :md="24" :lg="4">
                 <el-form-item label=" " label-width="0px">
                   <el-space wrap style="width: 100%">
@@ -823,7 +833,7 @@ onBeforeUnmount(() => {
           </el-form>
         </el-card>
 
-        <el-card shadow="never" class="admin-card" style="margin-top: 12px">
+        <el-card shadow="never" class="admin-card admin-animate-in" style="margin-top: 12px; --delay: 100ms">
           <div class="admin-table-wrap">
             <el-table :data="usersPage.items" border height="540" table-layout="fixed" v-loading="usersLoading">
               <el-table-column prop="id" label="ID" width="90" />
