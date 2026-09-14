@@ -19,6 +19,13 @@ const sendingCode = ref(false)
 const error = ref('')
 const formRef = ref<FormInstance>()
 
+const bypassCaptcha = computed(() => {
+  const explicit = String(import.meta.env.VITE_BYPASS_CAPTCHA ?? '').toLowerCase() === 'true'
+  const proxyTarget = String(import.meta.env.VITE_PROXY_TARGET ?? '')
+  const maybeApifox = /apifox/i.test(proxyTarget)
+  return Boolean(import.meta.env.DEV && (explicit || maybeApifox))
+})
+
 const form = reactive({
   identity: '',
   password: '',
@@ -27,7 +34,16 @@ const form = reactive({
 })
 
 const emailReg = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const accountReg = /^\d{5,10}$/
+
+type RememberedLogin = {
+  remember: boolean
+  mode: 'email' | 'account'
+  identity: string
+  password: string
+}
+
+const REMEMBER_KEY = 'arkmatch.remember.login'
+const rememberPassword = ref(false)
 
 const rules = computed<FormRules>(() => ({
   identity: [
@@ -44,7 +60,6 @@ const rules = computed<FormRules>(() => ({
           if (!emailReg.test(text)) return callback(new Error('邮箱格式不正确'))
           return callback()
         }
-        if (!accountReg.test(text)) return callback(new Error('账号格式不正确（5-10位数字）'))
         return callback()
       },
       trigger: ['blur', 'change'],
@@ -64,6 +79,7 @@ const rules = computed<FormRules>(() => ({
   captchaText: [
     {
       validator: (_rule, value: unknown, callback) => {
+        if (bypassCaptcha.value) return callback()
         const text = String(value ?? '').trim()
         if (!text) return callback(new Error('请输入图形验证码'))
         if (!/^[0-9A-Za-z]{4}$/.test(text)) return callback(new Error('图形验证码为4位数字/字母'))
@@ -88,7 +104,9 @@ const rules = computed<FormRules>(() => ({
 
 watch(mode, async () => {
   error.value = ''
-  await loadCaptcha()
+  if (!bypassCaptcha.value) {
+    await loadCaptcha()
+  }
   await nextTick()
   formRef.value?.clearValidate()
 })
@@ -116,6 +134,72 @@ function hintCaptchaRefresh(): void {
   captchaLoadError.value = '验证码已失效，请点击右侧图片刷新'
 }
 
+function pickPositiveNumber(value: unknown, fallback: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return n
+}
+
+function normalizeOkResponse(input: unknown): { ok: boolean; code?: number; message?: string } {
+  const raw = input as any
+  const message = String(raw?.message ?? raw?.msg ?? raw?.error ?? raw?.errorMessage ?? '')
+  const codeLike = raw?.code ?? raw?.status ?? raw?.errcode
+  const codeNum = Number(codeLike)
+  const hasCode = codeLike !== undefined && codeLike !== null && String(codeLike).trim() !== ''
+  const okByCode = hasCode && Number.isFinite(codeNum) ? codeNum === 0 || codeNum === 200 : undefined
+  const okByFlag = typeof raw?.success === 'boolean' ? raw.success : typeof raw?.ok === 'boolean' ? raw.ok : undefined
+  const ok = okByCode ?? okByFlag ?? true
+  return { ok, code: Number.isFinite(codeNum) ? codeNum : undefined, message: message || undefined }
+}
+
+function normalizeAuthSession(input: unknown): AuthSession | null {
+  const raw = input as any
+  const token =
+    raw?.accessToken ??
+    raw?.token ??
+    raw?.access_token ??
+    raw?.jwt ??
+    raw?.data?.accessToken ??
+    raw?.data?.token ??
+    raw?.data?.access_token ??
+    raw?.data?.jwt
+  const accessToken = String(token ?? '').trim()
+  if (!accessToken) return null
+  const tokenType =
+    String(raw?.tokenType ?? raw?.token_type ?? raw?.data?.tokenType ?? raw?.data?.token_type ?? 'Bearer').trim() || 'Bearer'
+  const accessExpiresIn = pickPositiveNumber(
+    raw?.accessExpiresIn ??
+      raw?.expiresIn ??
+      raw?.expires_in ??
+      raw?.data?.accessExpiresIn ??
+      raw?.data?.expiresIn ??
+      raw?.data?.expires_in,
+    86400,
+  )
+  const refreshToken = String(raw?.refreshToken ?? raw?.refresh_token ?? raw?.data?.refreshToken ?? raw?.data?.refresh_token ?? '').trim()
+  const refreshExpiresIn = pickPositiveNumber(
+    raw?.refreshExpiresIn ?? raw?.refresh_expires_in ?? raw?.data?.refreshExpiresIn ?? raw?.data?.refresh_expires_in,
+    2592000,
+  )
+  const userId = pickPositiveNumber(raw?.userId ?? raw?.uid ?? raw?.data?.userId ?? raw?.data?.uid ?? raw?.user?.id ?? raw?.data?.user?.id, 0)
+  const role = String(raw?.role ?? raw?.data?.role ?? raw?.user?.role ?? raw?.data?.user?.role ?? 'USER')
+  const weight = Number(raw?.weight ?? raw?.data?.weight ?? raw?.user?.weight ?? raw?.data?.user?.weight ?? 0) || 0
+  return { tokenType, accessToken, accessExpiresIn, refreshToken, refreshExpiresIn, userId, role, weight }
+}
+
+function normalizeLoginResponse(input: unknown): { ok: boolean; code?: number; message?: string; session?: AuthSession } {
+  const raw = input as any
+  const message = String(raw?.message ?? raw?.msg ?? raw?.error ?? raw?.errorMessage ?? '')
+  const codeLike = raw?.code ?? raw?.status ?? raw?.errcode
+  const codeNum = Number(codeLike)
+  const hasCode = codeLike !== undefined && codeLike !== null && String(codeLike).trim() !== ''
+  const okByCode = hasCode && Number.isFinite(codeNum) ? codeNum === 0 || codeNum === 200 : undefined
+  const okByFlag = typeof raw?.success === 'boolean' ? raw.success : typeof raw?.ok === 'boolean' ? raw.ok : undefined
+  const session = normalizeAuthSession(raw?.data ?? raw)
+  const ok = okByCode ?? okByFlag ?? Boolean(session?.accessToken)
+  return { ok, code: Number.isFinite(codeNum) ? codeNum : undefined, message: message || undefined, session: session ?? undefined }
+}
+
 let submitTimer: number | undefined
 
 const captchaId = ref('')
@@ -141,6 +225,7 @@ function startCooldown(seconds: number): void {
 }
 
 async function loadCaptcha(): Promise<void> {
+  if (bypassCaptcha.value) return
   const seq = ++captchaSeq
   captchaLoading.value = true
   captchaLoadError.value = ''
@@ -175,12 +260,14 @@ async function sendEmailCode(): Promise<void> {
   try {
     try {
       await formRef.value?.validateField('identity')
-      await formRef.value?.validateField('captchaText')
+      if (!bypassCaptcha.value) {
+        await formRef.value?.validateField('captchaText')
+      }
     } catch {
       return
     }
     if (captchaLoading.value) return
-    if (!captchaId.value) {
+    if (!bypassCaptcha.value && !captchaId.value) {
       await loadCaptcha()
       error.value = '请先获取图形验证码'
       return
@@ -191,15 +278,18 @@ async function sendEmailCode(): Promise<void> {
       method: 'POST',
       data: {
         email: form.identity.trim(),
-        captchaId: captchaId.value,
-        captchaText: form.captchaText.trim().toUpperCase(),
+        ...(bypassCaptcha.value
+          ? {}
+          : {
+              captchaId: captchaId.value,
+              captchaText: form.captchaText.trim().toUpperCase(),
+            }),
       },
     })
-    if (res.code !== 0) {
-      error.value = res.message || '验证码发送失败'
-      if (shouldRefreshCaptchaByCode(res.code)) {
-        hintCaptchaRefresh()
-      }
+    const parsed = normalizeOkResponse(res)
+    if (!parsed.ok) {
+      error.value = parsed.message || '验证码发送失败'
+      if (typeof parsed.code === 'number' && shouldRefreshCaptchaByCode(parsed.code)) hintCaptchaRefresh()
       return
     }
     ElMessage.success('验证码已发送，请查收邮箱')
@@ -254,7 +344,7 @@ async function doSubmit(): Promise<void> {
   if (!ok) return
   if (loading.value) return
   if (captchaLoading.value) return
-  if (!captchaId.value) {
+  if (!bypassCaptcha.value && !captchaId.value) {
     await loadCaptcha()
     error.value = '请先获取图形验证码'
     return
@@ -278,23 +368,37 @@ async function doSubmit(): Promise<void> {
             data: {
               account: form.identity.trim(),
               password: form.password,
-              captchaId: captchaId.value,
-              captchaText: form.captchaText.trim().toUpperCase(),
+              ...(bypassCaptcha.value
+                ? {}
+                : {
+                    captchaId: captchaId.value,
+                    captchaText: form.captchaText.trim().toUpperCase(),
+                  }),
             },
           })
 
-    if (res.code !== 0 || !res.data?.accessToken) {
-      error.value = res.message || '登录失败'
-      if (shouldRefreshCaptchaByCode(res.code)) {
-        hintCaptchaRefresh()
-      }
+    const parsed = normalizeLoginResponse(res)
+    if (!parsed.ok || !parsed.session?.accessToken) {
+      error.value = parsed.message || '登录失败'
+      if (typeof parsed.code === 'number' && shouldRefreshCaptchaByCode(parsed.code)) hintCaptchaRefresh()
       return
     }
 
-    authStore.setSession(res.data)
+    authStore.setSession(parsed.session)
+    if (rememberPassword.value && mode.value !== 'emailCode') {
+      const payload: RememberedLogin = {
+        remember: true,
+        mode: mode.value === 'account' ? 'account' : 'email',
+        identity: form.identity,
+        password: form.password,
+      }
+      localStorage.setItem(REMEMBER_KEY, JSON.stringify(payload))
+    } else {
+      localStorage.removeItem(REMEMBER_KEY)
+    }
     ElMessage.success('登录成功')
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : undefined
-    await router.replace(redirect || resolveHomePath(res.data.role))
+    await router.replace(redirect || resolveHomePath(parsed.session.role))
   } catch (e) {
     const anyErr = e as any
     const apiData = anyErr?.response?.data as any
@@ -316,10 +420,31 @@ function submit(): void {
 
 onMounted(async () => {
   lockScroll()
+  try {
+    const raw = localStorage.getItem(REMEMBER_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as RememberedLogin
+      if (parsed && parsed.remember && (parsed.mode === 'email' || parsed.mode === 'account')) {
+        rememberPassword.value = true
+        mode.value = parsed.mode
+        form.identity = String(parsed.identity || '')
+        form.password = String(parsed.password || '')
+      }
+    }
+  } catch {}
   if (authStore.isAuthenticated) {
     await router.replace(resolveHomePath(authStore.role))
   }
-  await loadCaptcha()
+  if (!bypassCaptcha.value) {
+    await loadCaptcha()
+  }
+})
+
+watch(rememberPassword, (next) => {
+  if (next) return
+  try {
+    localStorage.removeItem(REMEMBER_KEY)
+  } catch {}
 })
 
 onBeforeUnmount(() => {
@@ -358,6 +483,10 @@ onBeforeUnmount(() => {
         <el-form-item v-if="mode !== 'emailCode'" label="密码" prop="password">
           <el-input v-model="form.password" type="password" show-password autocomplete="current-password" @keyup.enter="submit" />
         </el-form-item>
+
+        <div v-if="mode !== 'emailCode'" class="auth-remember">
+          <el-checkbox v-model="rememberPassword">记住密码</el-checkbox>
+        </div>
 
         <el-form-item label="图形验证码" prop="captchaText">
           <div class="captcha-row">
@@ -451,6 +580,12 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   display: flex;
   justify-content: space-between;
+}
+
+.auth-remember {
+  margin: -6px 0 10px;
+  display: flex;
+  justify-content: flex-start;
 }
 
 .captcha-row {
