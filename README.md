@@ -141,3 +141,9 @@ pnpm build
   - `VITE_API_BASE_URL` 是否为 `/api`
   - 前端是否重启
   - Network 面板里请求是否变成 `http://localhost:5173/api/...`
+
+## Contributors
+
+- 郑师晨（核心开发）
+- Misty moon
+- gugudao
