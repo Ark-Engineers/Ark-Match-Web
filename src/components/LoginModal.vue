@@ -168,23 +168,26 @@ function switchTab(t: 'login' | 'register') {
           记住我这个账号
         </label>
         <!-- 图形验证码 -->
-        <div class="flex items-center gap-2">
-          <div
-            class="flex-1 min-w-0 rounded-lg bg-gray-800/40 border border-gray-700 overflow-hidden [&>svg]:block [&>svg]:h-11 [&>svg]:w-full"
-            :class="captchaLoading && 'opacity-50'"
-            v-html="captchaSvg"
+        <div class="flex items-stretch gap-2">
+          <input
+            v-model="captchaText"
+            type="text"
+            placeholder="图形验证码"
+            maxlength="8"
+            autocomplete="off"
+            class="flex-1 min-w-0 px-4 h-12 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm tracking-widest uppercase focus:outline-none focus:border-cyan-500/50"
+            @keyup.enter="handleLogin"
           />
           <button
             type="button"
-            title="点击刷新验证码"
-            class="shrink-0 px-3 py-2.5 rounded-lg bg-gray-800/50 border border-gray-700 text-gray-400 hover:text-cyan-300 hover:border-cyan-500/40 transition text-lg cursor-pointer"
+            title="点击图片刷新验证码"
+            class="shrink-0 h-12 rounded-lg bg-white/90 border border-cyan-400/55 overflow-hidden hover:border-cyan-300 transition cursor-pointer disabled:opacity-60 p-1 inline-flex items-center justify-center"
             :disabled="captchaLoading"
             @click="loadCaptcha"
-          >↻</button>
+          >
+            <div class="h-full flex items-center justify-center [&>svg]:block [&>svg]:h-full [&>svg]:w-auto [&>svg]:max-w-none" v-html="captchaSvg" />
+          </button>
         </div>
-        <input v-model="captchaText" type="text" placeholder="图形验证码" maxlength="8" autocomplete="off"
-               class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm tracking-widest uppercase focus:outline-none focus:border-cyan-500/50"
-               @keyup.enter="handleLogin" />
         <p v-if="auth.error" class="text-red-400 text-xs">{{ auth.error }}</p>
         <UiButton type="submit" block :loading="auth.loading">登录</UiButton>
       </form>

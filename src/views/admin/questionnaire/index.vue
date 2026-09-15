@@ -41,6 +41,19 @@ const importForm = reactive({
   file: null as File | null,
 })
 
+function statusLabel(status: string): string {
+  const s = String(status || '').trim().toUpperCase()
+  if (s === 'READY') return '已发布'
+  if (s === 'DRAFT') return '草稿'
+  return status || '-'
+}
+
+function statusTagType(status: string): 'success' | 'info' {
+  const s = String(status || '').trim().toUpperCase()
+  if (s === 'READY') return 'success'
+  return 'info'
+}
+
 function resetImportForm(): void {
   importForm.title = ''
   importForm.subtitle = ''
@@ -184,6 +197,42 @@ async function removeItem(item: QuestionnaireItem): Promise<void> {
   }
 }
 
+async function publishItem(item: QuestionnaireItem): Promise<void> {
+  try {
+    const res = await request<ApiResponse<unknown>>({
+      url: '/admin/questionnaire/publish',
+      method: 'POST',
+      data: { id: item.id },
+    })
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '发布失败')
+      return
+    }
+    ElMessage.success('已发布')
+    await loadList()
+  } catch {
+    ElMessage.error('发布失败')
+  }
+}
+
+async function unpublishItem(item: QuestionnaireItem): Promise<void> {
+  try {
+    const res = await request<ApiResponse<unknown>>({
+      url: '/admin/questionnaire/unpublish',
+      method: 'POST',
+      data: { id: item.id },
+    })
+    if (res.code !== 0) {
+      ElMessage.error(res.message || '撤回失败')
+      return
+    }
+    ElMessage.success('已撤回')
+    await loadList()
+  } catch {
+    ElMessage.error('撤回失败')
+  }
+}
+
 onMounted(async () => {
   await loadList()
 })
@@ -214,13 +263,19 @@ onMounted(async () => {
         <el-table-column prop="subtitle" label="副标题" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ row.subtitle || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="120" />
+        <el-table-column prop="status" label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" effect="dark">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" width="170" />
-        <el-table-column label="操作" width="230" fixed="right">
+        <el-table-column label="操作" width="310" fixed="right">
           <template #default="{ row }">
             <el-space>
               <el-button size="small" @click="goPreview(row.id)">预览</el-button>
               <el-button size="small" @click="goEdit(row.id)">编辑</el-button>
+              <el-button v-if="row.status === 'DRAFT'" size="small" type="primary" plain @click="publishItem(row)">发布</el-button>
+              <el-button v-else-if="row.status === 'READY'" size="small" type="warning" plain @click="unpublishItem(row)">撤回</el-button>
               <el-button size="small" type="danger" plain @click="removeItem(row)">删除</el-button>
             </el-space>
           </template>

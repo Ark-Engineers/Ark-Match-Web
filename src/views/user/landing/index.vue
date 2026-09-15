@@ -24,10 +24,12 @@ const showLoginPrompt = ref(false)
 const loginPromptPending = ref(false)
 /** 未登录完成问卷后暂存的提交载荷，登录成功后自动提交 */
 const pendingPayload = ref<{ questionnaireId: number; answers: AnswerSubmit[] } | null>(null)
+const lastNonSurveyIndex = ref(0)
 
 // Sync active section to UI store
 watch(activeIndex, (idx) => {
   ui.activeSection = idx
+  if (idx !== 1) lastNonSurveyIndex.value = idx
 })
 
 // When scrolling to profile center (section 2), refresh data if logged in
@@ -56,7 +58,11 @@ watch(() => ui.showLoginModal, (show) => {
             .then(() => ui.showToast('问卷已提交', 'success'))
             .catch(() => ui.showToast('问卷提交失败，可稍后在个人中心重试', 'error'))
         }
-        setTimeout(() => scrollTo(2), 400)
+        const target = lastNonSurveyIndex.value
+        setTimeout(() => {
+          scrollTo(target)
+          if (target === 2) setTimeout(() => profileSection.value?.loadData(), 900)
+        }, 400)
       }
     }, 300)
   }
@@ -91,10 +97,11 @@ onMounted(() => {
 
 function onQuestionnaireComplete(payload: { questionnaireId: number; answers: AnswerSubmit[] } | null) {
   if (auth.isLoggedIn) {
-    // Already logged in — engine already submitted; scroll to profile center directly
+    // Already logged in — engine already submitted; go back to previous section
     setTimeout(() => {
-      scrollTo(2)
-      setTimeout(() => profileSection.value?.loadData(), 900)
+      const target = lastNonSurveyIndex.value
+      scrollTo(target)
+      if (target === 2) setTimeout(() => profileSection.value?.loadData(), 900)
     }, 1500)
   } else {
     // Not logged in — hold the answers and show login prompt dialog
@@ -111,8 +118,7 @@ function onLoginPromptAccept() {
 
 function onLoginPromptDecline() {
   showLoginPrompt.value = false
-  // Still scroll to profile center (showing locked state)
-  setTimeout(() => scrollTo(2), 500)
+  setTimeout(() => scrollTo(lastNonSurveyIndex.value), 300)
 }
 </script>
 

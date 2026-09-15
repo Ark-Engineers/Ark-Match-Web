@@ -33,6 +33,7 @@ const position = ref({ x: 0, y: 0 })
 const pressed = ref<Set<string>>(new Set())
 const shiftPressed = ref(false)
 const moving = computed(() => pressed.value.size > 0)
+const facing = ref<1 | -1>(1)
 
 const animations = ref<string[]>([])
 const idleAnimation = ref('')
@@ -100,6 +101,9 @@ function step(ts: number): void {
   if (pressed.value.has('a')) vx -= 1
   if (pressed.value.has('d')) vx += 1
 
+  if (vx < 0) facing.value = -1
+  else if (vx > 0) facing.value = 1
+
   if (vx !== 0 || vy !== 0) {
     const len = Math.sqrt(vx * vx + vy * vy) || 1
     vx /= len
@@ -124,7 +128,7 @@ function pickAnimation(list: string[], kind: 'idle' | 'move'): string {
     }
     return ''
   }
-  if (kind === 'idle') return pick(['idle', 'stand', 'wait', 'default'])
+  if (kind === 'idle') return pick(['relax', 'idle', 'stand', 'wait', 'default'])
   return pick(['move', 'run', 'walk'])
 }
 
@@ -210,14 +214,16 @@ watch(moving, () => syncAnimation())
 
     <div class="stage">
       <div class="actor" :style="{ transform: `translate(${position.x}px, ${position.y}px)` }">
-        <SpinePixiPlayer
-          v-if="skelUrl"
-          :skel-url="skelUrl"
-          :animation-name="currentAnimation || undefined"
-          :loop="true"
-          fit="contain"
-          @loaded="onSpineLoaded"
-        />
+        <div class="actor-inner" :style="{ transform: `scaleX(${facing})` }">
+          <SpinePixiPlayer
+            v-if="skelUrl"
+            :skel-url="skelUrl"
+            :animation-name="currentAnimation || undefined"
+            :loop="true"
+            fit="contain"
+            @loaded="onSpineLoaded"
+          />
+        </div>
       </div>
       <div v-if="loading" class="loading">加载中…</div>
     </div>
@@ -273,6 +279,12 @@ watch(moving, () => syncAnimation())
   position: absolute;
   left: calc(50% - 260px);
   top: calc(50% - 260px);
+}
+
+.actor-inner {
+  width: 100%;
+  height: 100%;
+  transform-origin: center;
 }
 
 .loading {

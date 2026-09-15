@@ -37,7 +37,7 @@ function pickDefaultAnimation(list: string[]): string {
     }
     return ''
   }
-  return pick(['idle', 'stand', 'wait', 'default']) || l[0] || ''
+  return pick(['relax', 'idle', 'stand', 'wait', 'default']) || l[0] || ''
 }
 
 function destroy(): void {

@@ -18,13 +18,13 @@ const store = useSurveyStore()
 const auth = useAuthStore()
 const ui = useUiStore()
 const showEngine = ref(false)
+const prefill = ref<Record<string, any>>({})
 
 // 未登录不请求（后端问卷接口需登录）；登录后再异步拉取当前问卷
 async function load() {
   if (!auth.isLoggedIn) return
-  if (store.questions.length === 0) {
-    store.fetchCurrent().catch(() => { /* 错误态由模板展示 */ })
-  }
+  store.fetchCurrent().catch(() => { /* 错误态由模板展示 */ })
+  store.fetchMyActive().catch(() => { /* 刷新回显可选：失败不阻塞 */ })
 }
 
 onMounted(load)
@@ -38,15 +38,42 @@ watch(() => auth.isLoggedIn, (v) => {
 })
 
 function start() {
-  showEngine.value = true
+  if (store.loading) return
+  store.fetchCurrent()
+    .catch(() => { /* 错误态由模板展示 */ })
+    .finally(() => {
+      prefill.value = buildPrefill(store.currentQuestionnaire?.id ?? null)
+      showEngine.value = true
+    })
 }
 
 function onSurveyComplete(payload: CompletePayload) {
+  showEngine.value = false
   emit('complete', payload)
 }
 
 function backToIntro() {
   showEngine.value = false
+}
+
+function buildPrefill(questionnaireId: number | null): Record<string, any> {
+  const map: Record<string, any> = {}
+  if (!questionnaireId) return map
+  const active = store.myActive
+  if (!active || active.questionnaireId !== questionnaireId) return map
+  for (const a of active.answers) {
+    const key = `${a.parentSeq}:${a.seq}`
+    const q = store.questions.find((x) => (x.parentSeq ?? 0) === a.parentSeq && x.seq === a.seq)
+    const t = q?.type || ''
+    if (t.startsWith('多选')) {
+      map[key] = a.answerText.split('|').map((s) => s.trim()).filter(Boolean)
+    } else if (t === '判断') {
+      map[key] = a.answerText === 'true'
+    } else {
+      map[key] = a.answerText
+    }
+  }
+  return map
 }
 </script>
 
@@ -105,7 +132,7 @@ function backToIntro() {
         &larr; 返回
       </button>
       <div class="bg-gray-900/70 border border-gray-800 rounded-2xl p-6 md:p-8 backdrop-blur-sm max-h-[70vh] overflow-y-auto">
-        <SurveyEngine @complete="onSurveyComplete" @back="backToIntro" />
+        <SurveyEngine :prefill="prefill" @complete="onSurveyComplete" @back="backToIntro" />
       </div>
     </div>
   </section>
