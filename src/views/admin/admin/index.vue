@@ -71,6 +71,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
       items: [
         { index: '/admin/dashboard', label: '后台首页', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/notice', label: '公告管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { index: '/admin/spine', label: '明日方舟小人导入', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/m/1', label: '用户管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/m/2', label: '问卷管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
         { index: '/admin/ban', label: '封禁管理', roles: ['ADMIN', 'SUPER_ADMIN'] },
@@ -109,6 +110,7 @@ const watermark = computed(() => {
   const p = route.path
   if (p.startsWith('/admin/dashboard')) return 'ADMIN CENTER'
   if (p.startsWith('/admin/notice')) return 'NOTICE'
+  if (p.startsWith('/admin/spine')) return 'SPINE'
   if (p.startsWith('/admin/ban')) return 'BAN'
   if (p.startsWith('/admin/m/1')) return 'USERS'
   if (p.startsWith('/admin/m/2')) return 'QUESTIONNAIRE'
