@@ -31,7 +31,7 @@ async function loadData() {
       auth.fetchProfile(),
       matchStore.fetchStats(),
       notifStore.fetchUnreadCount(),
-      surveyStore.fetchSurveyStatus(),
+      surveyStore.fetchCurrent(),
     ])
     error.value = ''
     hasData.value = true
@@ -108,14 +108,11 @@ const entryCards = computed(() => [
 
       <!-- Unauthenticated -->
       <div v-if="!auth.isLoggedIn" class="mt-12 text-center">
-        <div class="bg-gray-900/40 border border-gray-800 rounded-2xl p-12 backdrop-blur-sm max-w-md mx-auto">
-          <div class="text-5xl mb-4 opacity-50">🔒</div>
-          <p class="text-gray-400 mb-6">登录后查看个人中心</p>
-          <button
-            class="px-8 py-3 bg-[#16B8E0] hover:bg-[#2ac6ea] text-white font-bold rounded-lg transition cursor-pointer"
-            @click="onLoginClick"
-          >登录 / 注册</button>
-        </div>
+        <p class="text-gray-500 text-sm mb-8">登录后查看个人中心</p>
+        <button
+          class="px-8 py-3 bg-[#16B8E0] hover:bg-[#2ac6ea] text-white font-bold rounded-lg transition cursor-pointer"
+          @click="onLoginClick"
+        >登录 / 注册</button>
       </div>
 
       <!-- Authenticated -->

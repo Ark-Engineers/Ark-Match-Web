@@ -30,7 +30,10 @@
         </a>
       </div>
 
-      <p class="text-gray-300 text-xs font-bold">Ark Match v0.2.0 &copy; 2026</p>
+      <div class="space-y-1">
+        <p class="text-gray-300 text-xs font-bold">Ark Match v0.2.0 &copy; 2026</p>
+        <p class="text-gray-400 text-xs">背景图片版权归鹰角网络（Hypergryph）所有</p>
+      </div>
     </div>
   </section>
 </template>

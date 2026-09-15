@@ -20,7 +20,7 @@ onMounted(async () => {
   await Promise.all([
     matchStore.fetchStats(),
     auth.fetchProfile(),
-    surveyStore.fetchSurveyStatus(),
+    surveyStore.fetchCurrent(),
   ])
   loading.value = false
 })
@@ -79,16 +79,21 @@ onMounted(async () => {
         <UiCard>
           <h3 class="text-white font-semibold text-sm mb-3">问卷状态</h3>
           <UiEmptyState
-            v-if="!surveyStore.surveyStatus.length"
-            title="暂无问卷记录"
-            description="完成问卷后加入匹配池"
+            v-if="!surveyStore.currentQuestionnaire"
+            title="暂无可用问卷"
+            description="当前没有可填写的问卷"
           />
           <div v-else class="space-y-2">
-            <div v-for="s in surveyStore.surveyStatus" :key="s.track"
-                 class="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
-              <span class="text-sm text-gray-300">{{ s.track === 'FRIEND' ? '🤝 交友' : '💕 恋爱' }}</span>
-              <span class="text-xs px-2 py-0.5 rounded" :class="s.isActive ? 'bg-green-500/10 text-green-400' : 'bg-gray-800 text-gray-500'">
-                {{ s.isActive ? '活跃' : '已过期' }}
+            <div class="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+              <div>
+                <span class="text-sm text-gray-300">{{ surveyStore.currentQuestionnaire.title }}</span>
+                <span v-if="surveyStore.currentQuestionnaire.subtitle" class="block text-xs text-gray-500 mt-0.5">
+                  {{ surveyStore.currentQuestionnaire.subtitle }}
+                </span>
+              </div>
+              <span class="text-xs px-2 py-0.5 rounded"
+                    :class="surveyStore.currentState?.hasActiveAnswer ? 'bg-green-500/10 text-green-400' : 'bg-gray-800 text-gray-500'">
+                {{ surveyStore.currentState?.hasActiveAnswer ? '已填写' : '未填写' }}
               </span>
             </div>
           </div>

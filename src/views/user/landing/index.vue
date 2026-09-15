@@ -11,7 +11,7 @@ import { useFullpageScroll } from '@/composables/useFullpageScroll'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useSurveyStore } from '@/stores/survey'
-import type { SurveyTrack } from '@/api/survey'
+import type { AnswerSubmit } from '@/api/questionnaire'
 
 const SECTION_COUNT = 4
 const { activeIndex, isTransitioning, scrollTo, containerRef } = useFullpageScroll(SECTION_COUNT)
@@ -22,8 +22,8 @@ const surveyStore = useSurveyStore()
 const profileSection = ref<InstanceType<typeof ProfileCenterSection> | null>(null)
 const showLoginPrompt = ref(false)
 const loginPromptPending = ref(false)
-/** 未登录完成问卷后暂存的 track，登录成功后自动提交草稿 */
-const pendingTrack = ref<SurveyTrack | null>(null)
+/** 未登录完成问卷后暂存的提交载荷，登录成功后自动提交 */
+const pendingPayload = ref<{ questionnaireId: number; answers: AnswerSubmit[] } | null>(null)
 
 // Sync active section to UI store
 watch(activeIndex, (idx) => {
@@ -46,18 +46,15 @@ watch(() => ui.showLoginModal, (show) => {
       if (auth.isLoggedIn) {
         profileSection.value?.loadData()
       }
-      // If login was prompted after questionnaire, submit pending draft then scroll to profile center
+      // If login was prompted after questionnaire, submit pending answers then scroll to profile center
       if (loginPromptPending.value && auth.isLoggedIn) {
         loginPromptPending.value = false
-        const track = pendingTrack.value
-        pendingTrack.value = null
-        if (track) {
-          const draft = surveyStore.loadDraft(track)
-          if (draft?.answers && Object.keys(draft.answers).length > 0) {
-            surveyStore.submit(track, draft.answers)
-              .then(() => ui.showToast('问卷已提交', 'success'))
-              .catch(() => ui.showToast('问卷提交失败，可稍后在个人中心重试', 'error'))
-          }
+        const payload = pendingPayload.value
+        pendingPayload.value = null
+        if (payload) {
+          surveyStore.submit(payload.questionnaireId, payload.answers)
+            .then(() => ui.showToast('问卷已提交', 'success'))
+            .catch(() => ui.showToast('问卷提交失败，可稍后在个人中心重试', 'error'))
         }
         setTimeout(() => scrollTo(2), 400)
       }
@@ -70,6 +67,11 @@ function onNavNavigate(index: number) {
 }
 
 function onQuickStart() {
+  // 未登录：直接唤起登录弹窗，登录后才能进入问卷填写
+  if (!auth.isLoggedIn) {
+    ui.toggleLoginModal(true)
+    return
+  }
   scrollTo(1)
 }
 
@@ -87,16 +89,16 @@ onMounted(() => {
   } catch { /* ignore */ }
 })
 
-function onQuestionnaireComplete(track: SurveyTrack) {
+function onQuestionnaireComplete(payload: { questionnaireId: number; answers: AnswerSubmit[] } | null) {
   if (auth.isLoggedIn) {
-    // Already logged in — scroll to profile center directly
+    // Already logged in — engine already submitted; scroll to profile center directly
     setTimeout(() => {
       scrollTo(2)
       setTimeout(() => profileSection.value?.loadData(), 900)
     }, 1500)
   } else {
-    // Not logged in — show login prompt dialog
-    pendingTrack.value = track
+    // Not logged in — hold the answers and show login prompt dialog
+    pendingPayload.value = payload
     showLoginPrompt.value = true
   }
 }
