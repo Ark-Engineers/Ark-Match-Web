@@ -1,3 +1,6 @@
+allowBuilds:
+  core-js: true
+
 overrides:
   'vue': 'beta'
   '@vue/compiler-core': 'beta'

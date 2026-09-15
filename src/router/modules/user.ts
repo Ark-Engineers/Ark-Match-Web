@@ -30,4 +30,53 @@ export const userRoutes: RouteRecordRaw[] = [
     component: () => import('@/views/user/ban-records/index.vue'),
     meta: { requiresAuth: true },
   },
+  // ---- v1 迁移页面 ----
+  {
+    path: '/profile',
+    name: 'profile-edit',
+    component: () => import('@/views/user/profile-edit/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/match-status',
+    name: 'match-status',
+    component: () => import('@/views/user/match-status/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/pending-matches',
+    name: 'pending-matches',
+    component: () => import('@/views/user/pending-matches/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/match/:id',
+    name: 'match-detail',
+    component: () => import('@/views/user/match-detail/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: () => import('@/views/user/notifications/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/notices',
+    name: 'notices',
+    component: () => import('@/views/user/notices/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/survey-refresh',
+    name: 'survey-refresh',
+    component: () => import('@/views/user/survey-refresh/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/ban-appeal',
+    name: 'user-ban-appeal',
+    component: () => import('@/views/user/ban-appeal/index.vue'),
+    meta: { requiresAuth: true },
+  },
 ]

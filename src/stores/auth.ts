@@ -3,6 +3,8 @@ import { defineStore } from 'pinia'
 
 import { STORAGE_KEYS } from '@/constants/storage-keys'
 import { getJson, remove, setJson } from '@/utils/storage'
+import * as authApi from '@/api/auth'
+import { getMe as apiGetMe } from '@/api/user'
 
 export type UserRole = 'ADMIN' | 'USER' | string
 
@@ -91,6 +93,107 @@ export const useAuthStore = defineStore('auth', () => {
       localStorage.removeItem('user')
       sessionStorage.clear()
     } catch {}
+    profile.value = null
+    nickname.value = ''
+    userIdComputed.value = 0
+    error.value = ''
+  }
+
+  // ---- v1 兼容接口（登录弹窗 / 用户侧迁移页面使用，仍以 main 的 session 持久化为主）----
+  const profile = ref<any>(null)
+  const nickname = ref('')
+  const loading = ref(false)
+  const error = ref('')
+  const rememberedAccount = ref('')
+  const rememberMe = ref(false)
+
+  const userIdComputed = ref<number>(0)
+
+  const isLoggedIn = computed(() => isAuthenticated.value)
+  const isAdmin = computed(() => String(role.value ?? '').toUpperCase() === 'ADMIN' || String(role.value ?? '').toUpperCase() === 'SUPER_ADMIN')
+  const userId = computed(() => userIdComputed.value || Number(session.value?.userId ?? 0) || 0)
+
+  async function fetchProfile(): Promise<any | null> {
+    if (!isLoggedIn.value) return null
+    try {
+      const data = await apiGetMe()
+      profile.value = data
+      if (data?.nickname) {
+        nickname.value = data.nickname
+      }
+      if (Number(data?.userId || 0)) userIdComputed.value = Number(data.userId)
+      return data
+    } catch {
+      return null
+    }
+  }
+
+  async function login(account: string, password: string, remember = false, captchaId?: string, captchaText?: string) {
+    loading.value = true
+    error.value = ''
+    try {
+      const t = await authApi.login(account, password, captchaId ?? '', captchaText ?? '')
+      setSession(t)
+      if (Number(t.userId || 0)) userIdComputed.value = Number(t.userId)
+      if (remember) localStorage.setItem('rememberedAccount', account)
+      else localStorage.removeItem('rememberedAccount')
+      return t
+    } catch (e: any) {
+      error.value = e.message ?? '登录失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function register(email: string, emailCode: string, password: string, confirmPassword: string, nicknameInput: string) {
+    loading.value = true
+    error.value = ''
+    try {
+      return await authApi.register({ email, emailCode, password, confirmPassword, nickname: nicknameInput })
+    } catch (e: any) {
+      error.value = e.message ?? '注册失败'
+      throw e
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function logout(opts?: { all?: boolean; refreshToken?: string }) {
+    try {
+      const rt = opts?.refreshToken ?? session.value?.refreshToken
+      if (opts?.all) await authApi.logoutAll()
+      else await authApi.logout(rt ?? undefined)
+    } catch {
+      // 登出接口失败也强制清登录态
+    } finally {
+      clearAllClientAuthState()
+    }
+  }
+
+  function clear(): void {
+    clearAllClientAuthState()
+  }
+
+  // 会话过期定时检查：登录后每分钟校验 JWT exp，过期即登出并广播（供应用层引导重新登录）
+  let watcherTimer: ReturnType<typeof setInterval> | null = null
+  function startSessionWatcher(): void {
+    stopSessionWatcher()
+    if (typeof window === 'undefined') return
+    watcherTimer = setInterval(() => {
+      const exp = sessionExpireAt.value
+      if (!session.value?.accessToken) return
+      if (exp && typeof exp === 'number' && !Number.isNaN(exp) && Date.now() > exp) {
+        clearAllClientAuthState()
+        window.dispatchEvent(new CustomEvent('auth:force-logout'))
+      }
+    }, 60_000)
+  }
+  function stopSessionWatcher(): void {
+    if (watcherTimer !== null) {
+      clearInterval(watcherTimer)
+      watcherTimer = null
+    }
   }
 
   return {
@@ -102,6 +205,23 @@ export const useAuthStore = defineStore('auth', () => {
     setSession,
     clearSession,
     clearAllClientAuthState,
+    // v1 兼容
+    isLoggedIn,
+    isAdmin,
+    nickname,
+    profile,
+    userId,
+    loading,
+    error,
+    rememberedAccount,
+    rememberMe,
+    login,
+    register,
+    logout,
+    fetchProfile,
+    clear,
+    startSessionWatcher,
+    stopSessionWatcher,
   }
 })
 

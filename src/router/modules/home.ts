@@ -4,8 +4,11 @@ export const homeRoutes: RouteRecordRaw[] = [
   {
     path: '/home',
     name: 'home',
-    component: () => import('@/views/home/index.vue'),
-    meta: { requiresAuth: true },
+    component: () => import('@/views/user/landing/index.vue'),
+  },
+  {
+    path: '/',
+    name: 'landing',
+    component: () => import('@/views/user/landing/index.vue'),
   },
 ]
-

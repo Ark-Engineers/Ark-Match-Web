@@ -1,8 +1,10 @@
+@import 'tailwindcss';
+
 :root {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
     'Noto Sans', 'Liberation Sans', sans-serif;
   color: #111827;
-  background: #ffffff;
+  background: transparent;
 
   --brand-blue: #4a90e2;
   --brand-blue-100: #eaf4ff;
@@ -28,7 +30,7 @@
 
 body {
   margin: 0;
-  background: var(--el-bg-color-page);
+  background: transparent;
 }
 
 a {
