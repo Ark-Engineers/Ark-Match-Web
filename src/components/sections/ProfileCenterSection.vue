@@ -6,6 +6,7 @@ import { useUiStore } from '@/stores/ui'
 import { useMatchStore } from '@/stores/match'
 import { useNotificationStore } from '@/stores/notification'
 import { useSurveyStore } from '@/stores/survey'
+import { resolveArkAvatarUrl } from '@/api/user'
 import UiCard from '@/components/UiCard.vue'
 import UiSpinner from '@/components/UiSpinner.vue'
 import UiErrorState from '@/components/UiErrorState.vue'
@@ -21,6 +22,14 @@ const loading = ref(false)
 const error = ref('')
 /** 是否已有可展示的数据（用于区分首屏 loading 与后台静默刷新） */
 const hasData = ref(false)
+/** 个人中心顶部头像：优先 charId 拼 CDN，回落 avatarUrl；加载失败回退昵称首字母，src 变化时自动重试 */
+const avatarError = ref(false)
+const homeAvatarUrl = computed(() =>
+  resolveArkAvatarUrl(auth.profile?.avatarCharId, auth.profile?.avatarUrl),
+)
+watch(homeAvatarUrl, () => {
+  avatarError.value = false
+})
 
 async function loadData() {
   if (!auth.isLoggedIn) return
@@ -123,8 +132,16 @@ const entryCards = computed(() => [
             class="flex items-center gap-3 px-4 py-2 rounded-xl hover:bg-gray-800/50 transition cursor-pointer"
             @click="router.push('/profile')"
           >
-            <div class="w-12 h-12 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-lg text-gray-300 overflow-hidden">
-              {{ auth.profile?.nickname?.charAt(0)?.toUpperCase() || '👤' }}
+            <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center text-lg text-gray-300 bg-transparent">
+              <img
+                v-if="homeAvatarUrl && !avatarError"
+                :src="homeAvatarUrl"
+                :alt="auth.profile?.nickname || '头像'"
+                referrerpolicy="no-referrer"
+                class="w-full h-full object-cover"
+                @error="avatarError = true"
+              >
+              <span v-else>{{ auth.profile?.nickname?.charAt(0)?.toUpperCase() || '👤' }}</span>
             </div>
             <div class="text-left">
               <p class="text-white text-sm font-medium">{{ auth.profile?.nickname || '用户' }}</p>
@@ -138,7 +155,7 @@ const entryCards = computed(() => [
         <UiErrorState v-else-if="error && !hasData" :message="error" @retry="loadData" />
 
         <!-- Entry cards（已有数据时后台刷新不打断展示） -->
-        <div v-else class="relative grid grid-cols-1 sm:grid-cols-2 gap-4" :class="{ 'opacity-70 pointer-events-none': loading }">
+        <div v-else class="relative grid grid-cols-1 sm:grid-cols-2 gap-4">
           <UiCard
             v-for="card in entryCards" :key="card.title"
             clickable

@@ -114,6 +114,12 @@ const currentAvatarName = computed(() => {
   return profile.value?.avatarCharName || ''
 })
 
+/** 预览头像加载失败标记；src 变化时自动重置，避免一次失败后永久显示占位 */
+const previewAvatarError = ref(false)
+watch(currentAvatarUrl, () => {
+  previewAvatarError.value = false
+})
+
 const filteredAvatarOptions = computed(() => {
   const kw = avatarKeyword.value.trim()
   if (!kw) return avatarOptions.value
@@ -304,13 +310,14 @@ onMounted(async () => {
               "
             >
               <img
-                v-if="currentAvatarUrl"
+                v-if="currentAvatarUrl && !previewAvatarError"
                 :src="currentAvatarUrl"
                 :alt="currentAvatarName"
                 referrerpolicy="no-referrer"
                 loading="lazy"
                 decoding="async"
                 style="width: 64px; height: 64px; object-fit: cover"
+                @error="previewAvatarError = true"
               />
               <span v-else style="font-weight: 700">{{ (profile?.nickname || '').slice(0, 1) }}</span>
             </div>

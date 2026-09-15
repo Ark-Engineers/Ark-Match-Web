@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useNotificationStore } from '@/stores/notification'
+import { resolveArkAvatarUrl } from '@/api/user'
 
 const props = defineProps<{
   activeSection: number
@@ -17,6 +18,15 @@ const router = useRouter()
 const auth = useAuthStore()
 const ui = useUiStore()
 const notifStore = useNotificationStore()
+
+/** navbar 头像：优先 charId 拼 CDN，回落 avatarUrl；失败回退昵称首字母，src 变化自动重试 */
+const navbarAvatarError = ref(false)
+const navbarAvatarUrl = computed(() =>
+  resolveArkAvatarUrl(auth.profile?.avatarCharId, auth.profile?.avatarUrl),
+)
+watch(navbarAvatarUrl, () => {
+  navbarAvatarError.value = false
+})
 
 // 设计稿顺序：问卷填写 → 个人中心 → 项目主页（滚到最后一页 AboutSection）
 const navItems = [
@@ -135,10 +145,18 @@ onUnmounted(() => {
           class="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-white/5 transition cursor-pointer"
           @click="toggleMenu"
         >
-          <div class="w-10 h-10 rounded-full bg-gray-800 border border-gray-600 flex items-center justify-center text-sm font-bold text-gray-200 overflow-hidden shrink-0">
-            <span v-if="auth.nickname">{{ auth.nickname.charAt(0).toUpperCase() }}</span>
-            <span v-else class="text-xs">👤</span>
-          </div>
+          <div class="w-10 h-10 rounded-full overflow-hidden shrink-0 bg-transparent">
+              <img
+                v-if="navbarAvatarUrl && !navbarAvatarError"
+                :src="navbarAvatarUrl"
+                :alt="auth.nickname || '头像'"
+                referrerpolicy="no-referrer"
+                class="w-full h-full object-cover"
+                @error="navbarAvatarError = true"
+              >
+              <span v-else-if="auth.nickname">{{ auth.nickname.charAt(0).toUpperCase() }}</span>
+              <span v-else class="text-xs">👤</span>
+            </div>
           <div class="hidden md:block text-left leading-tight">
             <p class="text-white text-sm font-medium">{{ auth.nickname || '用户' }}</p>
             <p class="text-gray-400 text-xs">欢迎回来</p>

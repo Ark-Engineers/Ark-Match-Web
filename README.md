@@ -1,144 +1,148 @@
-# arkMatchWeb
+# arkMatchWeb（罗德之门 Ark Match 前端）
 
-arkMatchWeb 是一个基于 Vue 3 + Vite + TypeScript 的前端工程，已实现独立的登录/注册页面，并将后端登录注册接口完整集成到前端页面代码中；支持用户类型识别（管理员/普通用户）、按身份自动跳转、登录后身份标识展示，以及完整登出（清理前端存储与缓存并回到登录页）。
+罗德之门（Ark Match）的 Web 前端。为《明日方舟》玩家打造的同频交友平台：通过多维问卷评估，智能匹配兴趣、玩法与价值观相近的干员玩家。
 
-## 功能要求（已落地）
+技术栈：**Vue 3 + Vite 8 + TypeScript + Pinia + Vue Router + axios**，样式 **Tailwind CSS 4**（用户端）+ **Element Plus**（后台）。
 
-### 1) 页面架构（仅 2 个核心页面）
+> 本仓库仅包含前端。后端见独立仓库 `Ark-Match-Server`。
 
-- 登录页：`/login`（页面内完成接口调用、异常捕获、错误提示、表单校验）
-- 注册页：`/register`（页面内完成接口调用、异常捕获、错误提示、表单校验）
+---
 
-### 2) 用户类型识别与自动跳转
+## 部署指南
 
-- 登录成功后解析后端返回的 `role` 字段：
-  - `ADMIN` → 跳转到 `/admin/dashboard`
-  - 其他（默认普通用户）→ 跳转到 `/user/home`
-- 登录后专属页面顶部显眼位置展示身份文字提示：
-  - 管理员页显示：当前登录身份：管理员
-  - 普通用户页显示：当前登录身份：普通用户
+### 1) 前端产物与 API 约定
 
-### 3) 完整登出（必须防止未授权访问）
+- 前端所有请求走相对路径 `VITE_API_BASE_URL=/api`，即浏览器请求 `<你的域名>/api/...`。
+- 因此生产环境需要一个反向代理把 `/api` 转发到后端，并**去掉 `/api` 前缀**。
+- 后端默认地址：`http://www.chenmyserver.cn:8888`（部署时替换成你自己的后端地址 / 域名）。
 
-- 管理员页与普通用户页均提供显眼的登出按钮
-- 点击登出会执行：
-  - 调用后端 `POST /auth/logout`（可携带 refreshToken）
-  - 清除前端身份状态：localStorage / sessionStorage 中的 token 与用户信息
-  - 清除浏览器 CacheStorage（若存在）
-  - 强制跳转回 `/login`，并触发页面 reload，避免残留状态导致的未授权访问
-
-### 4) 基础校验与错误提示
-
-- 登录/注册页提交前进行合法性校验：
-  - 手机号：11 位、以 1 开头（仅当输入为纯数字时按手机号规则校验）
-  - 账号：`3-32` 位字母/数字/下划线
-  - 邮箱：基本格式校验
-  - 密码：仅校验非空（不做长度提示）
-- 所有接口调用具备基础异常捕获，页面展示清晰的错误提示信息
-
-## 路由说明
-
-- 访客页：
-  - `/login`
-  - `/register`
-- 登录后页面（受保护）：
-  - `/admin/dashboard`（仅管理员）
-  - `/user/home`（仅普通用户）
-- 未登录访问受保护路由会被拦截并跳转到 `/login`
-- 已登录访问 `/login` 或 `/register` 会按身份自动重定向到对应主页
-
-路由与守卫位置：
-- `src/router/index.ts`
-- `src/router/modules/*.ts`
-
-## 接口对接规范
-
-后端鉴权接口（dateOrFriends）：
-- `POST /auth/login`
-- `POST /auth/register`
-- `POST /auth/refresh`
-- `POST /auth/logout`
-
-统一响应结构：
-- `ApiResponse<T> = { code: number; message: string; data: T }`
-- 登录成功 `data` 内包含 `accessToken / refreshToken / role / userId` 等字段
-
-前端请求约定：
-- Axios 封装：`src/api/request.ts`
-- 会自动在请求头注入 `Authorization: <tokenType> <accessToken>`（默认 Bearer）
-
-## 管理员后台 UI（Element UI / Element Plus）
-
-- 管理员后台页面统一使用 Element UI 体系组件库（Vue 3 对应 Element Plus）实现表单、表格、弹窗、分页等交互组件，保证后台界面风格与交互一致。
-- 当前项目采用“全量引入”方式注册组件库：
-  - 注册位置：`src/main.ts`
-  - 样式入口：`element-plus/dist/index.css`
-
-## 本地开发（推荐流程）
-
-### 0) 前置条件
-
-- Node.js（建议与 `package.json` 的 engines 对齐）
-- pnpm
-- 后端服务已在本机启动并监听 `http://127.0.0.1:8888`（dev profile 默认端口为 8888）
-
-### 1) 安装依赖
+### 2) 构建
 
 ```sh
 pnpm install
-```
-
-### 2) 启动前端（dev）
-
-```sh
-pnpm dev
-```
-
-### 3) Type Check / Build
-
-```sh
-pnpm run type-check
 pnpm build
 ```
 
-## 环境变量与代理（解决 CORS 的关键）
+- 类型检查 + 生产构建一条龙。
+- 产物输出到 `dist-YYYYMMDD/`，`scripts/postbuild.mjs` 会自动把最新一份同步为 `dist/`（最终部署取 `dist/` 内容）。
 
-本项目在 dev 环境通过 Vite proxy 转发到后端，避免浏览器跨域：
+### 3) 托管 + 反向代理（以 Nginx 为例）
 
-- 环境文件：`env/.env.dev`
-- 推荐配置：
-  - `VITE_API_BASE_URL=/api`
-  - `VITE_PROXY_PREFIX=/api`
-  - `VITE_PROXY_TARGET=http://127.0.0.1:8888`
+把 `dist/` 的内容上传到服务器 webroot，配置 Nginx：
 
-效果：
-- 浏览器请求：`http://localhost:5173/api/auth/login`
-- Vite 转发为：`http://127.0.0.1:8888/auth/login`
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
 
-修改 env 后必须重启 dev server 才会生效。
+    root /var/www/arkmatch-web/dist;
+    index index.html;
+
+    # SPA 路由回退
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 前端 API 反向代理到后端（去掉 /api 前缀）
+    location /api/ {
+        proxy_pass http://www.chenmyserver.cn:8888/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+> `proxy_pass .../` 结尾带斜杠会去除 `/api` 前缀；例如 `/api/auth/login` → `http://backend:8888/auth/login`。
+
+### 4) 其他托管方式
+
+- **静态托管（OSS / CDN / GitHub Pages 等）**：仍可部署 `dist/`，但需要一个网关/CDN 规则把 `/api/` 请求转发到后端并去掉前缀，否则接口 404。
+- 若后端与前端**同源部署**（Nginx 已代理 `/api`），无需额外跨域配置。
+
+---
+
+## 环境变量
+
+配置文件目录：`env/`
+
+| 变量 | dev 示例 | 作用 |
+| --- | --- | --- |
+| `VITE_API_BASE_URL` | `/api` | 所有请求的相对基础路径 |
+| `VITE_PORT` | `5173` | dev server 端口 |
+| `VITE_PROXY_TARGET` | `http://www.chenmyserver.cn:8888` | dev 代理转发后端（仅 dev） |
+| `VITE_ASSET_BASE` | `/` | Vite 资源 `base`，可部署到子路径 |
+| `VITE_DROP_CONSOLE` | `false` | prod 是否去除 console |
+| `VITE_PROD_DOMAIN` | `www.chenmyserver.cn` | 生产域名 |
+
+修改 env 后需重启 dev / 重新构建才生效。
+
+---
+
+## 本地开发
+
+### 前置条件
+
+- Node.js `^20.19.0 || >=22.12.0`
+- pnpm
+- （可选）本地后端；否则 dev 代理直连在线后端 `www.chenmyserver.cn:8888`
+
+```sh
+pnpm install
+pnpm dev        # http://localhost:5173
+```
+
+Dev 代理（`vite.config.ts`）：`/api/*` → `VITE_PROXY_TARGET`，自动去掉 `/api` 前缀，解决开发期 CORS。
+
+### 校验与构建
+
+```sh
+pnpm run type-check   # vue-tsc 类型检查
+pnpm build            # type-check + 生产构建
+```
+
+---
+
+## 页面与功能
+
+- **落地页（首页）** `/`：整屏滚动（问卷填写 / 个人中心 / 项目主页），含快速开始、登录引导。
+- **问卷**：后端驱动的多题型问卷（单选 / 判断 / `多选_X` / 填空）+ 父子题联动，未登录可先作答、登录后自动提交；含问卷刷新回显页。
+- **个人中心 / 编辑资料**：头像（干员 CDN）、主打干员、简介、生日、标签、QQ/微信/邮箱。
+- **匹配**：匹配状态、待确认匹配、匹配详情。
+- **通知 / 公告**、**封禁申诉**、**登录 / 注册**（独立页 + 弹窗）。
+- **管理后台**（仅管理员）：问卷管理、用户管理、公告、仪表盘等（基于 Element Plus）。
+
+核心页面目录：`src/views/user/**`（每个页面一个文件夹）。
+
+---
 
 ## 目录结构（核心）
 
-- `src/views/auth/login/index.vue`：登录页（接口调用与校验逻辑在页面内）
-- `src/views/auth/register/index.vue`：注册页（接口调用与校验逻辑在页面内）
-- `src/views/admin/dashboard/index.vue`：管理员专属页（身份提示 + 登出）
-- `src/views/user/home/index.vue`：普通用户专属页（身份提示 + 登出）
-- `src/stores/auth.ts`：登录态（token/role）存储与清理
-- `src/api/request.ts`：Axios 实例与拦截器
-- `src/router/index.ts`：全局守卫（requiresAuth/role/guestOnly）
+```
+env/                        环境变量（dev / prod / example）
+public/                     logo、背景图等静态资源
+scripts/postbuild.mjs       构建后把 dist-YYYYMMDD 同步到 dist/
+src/
+  api/                      axios 封装（request.ts）、各功能接口
+  components/               通用组件（Ui*、SurveyEngine，sections 内为落地页区块）
+  composables/              组合式函数（useSurveyEngine 等）
+  config/                   API_BASE_URL 等全局配置
+  router/                   modules/ 按模块拆分路由 + 全局守卫
+  stores/                   Pinia（auth / ui / notification / survey / match …）
+  utils/                    存储、封禁拦截等工具
+  views/                    auth(登录注册) / user(用户端) / admin(后台)
+  App.vue / main.css / main.ts
+vite.config.ts / envDir=env
+```
+
+## 关键约定
+
+- 鉴权：`request.ts` 拦截器自动注入 `Authorization`；`401` 自动清登录态，重登返回落地页。
+- 头像资源：干员头像 CDN `https://web.hycdn.cn/arknights/game/assets/char/avatar/{charId}.png`（前端按 `charId` 拼 URL，无 `charId` 回落后端 `avatarUrl`）。
+- 头像 `<img>` 统一加 `referrerpolicy="no-referrer"` 规避 CDN 防盗链。
 
 ## 常见问题排查
 
-### 1) `ERR_CONNECTION_TIMED_OUT`
-
-- 后端未启动 / 端口不通
-- `env/.env.dev` 的 `VITE_PROXY_TARGET` 指向错误
-
-### 2) CORS 报错（`No 'Access-Control-Allow-Origin' header`）
-
-- 说明浏览器在直连后端（例如 `http://127.0.0.1:8888/auth/login`）
-- 请确认：
-  - `VITE_API_BASE_URL` 是否为 `/api`
-  - 前端是否重启
-  - Network 面板里请求是否变成 `http://localhost:5173/api/...`
-
+1. **接口 401 / 拿不到数据**：确认反向代理的 `/api` 已正确转发到后端并去掉前缀；检查 Network 里请求地址。
+2. **CORS `No 'Access-Control-Allow-Origin'`**：浏览器直连了后端，应走 `VITE_API_BASE_URL=/api` 同源代理。
+3. **dev 起不来**：确认 Node 版本符合 engines，pnpm 已安装依赖。

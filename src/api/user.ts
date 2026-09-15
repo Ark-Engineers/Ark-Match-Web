@@ -8,11 +8,21 @@ export interface UserProfile {
   nickname: string
   avatarUrl: string | null
   avatarCharId?: string | null
+  avatarCharName?: string | null
   gender: string
   bio: string | null
   birthYear: number | null
   isInPool: boolean
   status: string
+  featuredRole?: string | null
+  signature?: string | null
+  region?: string | null
+  age?: number | null
+  birthday?: string | null
+  birthdayVisible?: boolean | null
+  tags?: string[]
+  qq?: string | null
+  wechat?: string | null
   createdAt: string
   lastLoginAt: string
   pendingMatches: number
@@ -42,11 +52,16 @@ export async function getMe(): Promise<UserProfile> {
 }
 
 export async function updateProfile(data: {
-  nickname?: string
-  avatarUrl?: string
-  gender?: string
-  bio?: string
-  birthYear?: number
+  featuredRole?: string | null
+  signature?: string | null
+  birthday?: string | null
+  birthdayVisible?: boolean | null
+  tags?: string[]
+  avatarCharId?: string | null
+  avatarCharName?: string | null
+  qq?: string | null
+  wechat?: string | null
+  email?: string | null
 }): Promise<UserProfile> {
   return unwrap<UserProfile>({ url: '/user/profile', method: 'PUT', data })
 }

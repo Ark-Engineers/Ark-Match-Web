@@ -13,13 +13,13 @@
           罗德之门（Ark Match）是一个专为<strong class="text-cyan-400">明日方舟</strong>玩家打造的同频交友平台。
           通过多维问卷评估，智能匹配与你兴趣、玩法和价值观相近的其他干员玩家。
         </p>
-        <p class="text-gray-400 text-sm leading-relaxed">
+        <!-- <p class="text-gray-400 text-sm leading-relaxed">
           项目采用双轨制匹配：<strong class="text-white">FRIEND 交友模式</strong>（8个匹配维度）和
           <strong class="text-white">LOVE 恋爱模式</strong>（15个匹配维度），基于 Jaccard 相似度算法进行智能配对。
         </p>
         <p class="text-gray-400 text-sm leading-relaxed">
           技术栈：Vue 3 + TypeScript · Spring Boot WebFlux · MySQL + Redis · JWT 认证
-        </p>
+        </p> -->
       </div>
 
       <div class="flex flex-wrap justify-center gap-4">
@@ -32,7 +32,7 @@
 
       <div class="space-y-1">
         <p class="text-gray-300 text-xs font-bold">Ark Match v0.2.0 &copy; 2026</p>
-        <p class="text-gray-400 text-xs">背景图片版权归鹰角网络（Hypergryph）所有</p>
+        <p class="text-gray-400 text-xs">背景图片来源于鹰角网络</p>
       </div>
     </div>
   </section>
