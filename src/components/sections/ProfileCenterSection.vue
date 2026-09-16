@@ -130,7 +130,7 @@ const entryCards = computed(() => [
         <div class="flex justify-center mb-8">
           <button
             class="flex items-center gap-3 px-4 py-2 rounded-xl hover:bg-gray-800/50 transition cursor-pointer"
-            @click="router.push('/profile')"
+            @click="router.push('/user/profile')"
           >
             <div class="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center text-lg text-gray-300 bg-transparent">
               <img

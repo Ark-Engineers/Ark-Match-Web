@@ -24,8 +24,8 @@ export interface InboxPage {
   items: InboxItem[]
 }
 
-export async function getNotifications(page = 1, size = 20): Promise<InboxPage> {
-  return unwrap<InboxPage>({ url: '/user/notifications', method: 'GET', params: { page, size } })
+export async function getNotifications(page = 1, size = 20, read?: 0 | 1): Promise<InboxPage> {
+  return unwrap<InboxPage>({ url: '/user/notifications', method: 'GET', params: { page, size, read } })
 }
 
 export async function getUnreadCount(): Promise<number> {

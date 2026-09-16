@@ -12,11 +12,11 @@ export const useNotificationStore = defineStore('notification', () => {
   const loading = ref(false)
   const error = ref('')
 
-  async function fetchNotifications(page = 1, size = 20) {
+  async function fetchNotifications(page = 1, size = 20, read?: 0 | 1) {
     loading.value = true
     error.value = ''
     try {
-      const data = await getNotifications(page, size)
+      const data = await getNotifications(page, size, read)
       notifications.value = data?.items ?? []
       total.value = data?.total ?? 0
     } catch (e: any) {

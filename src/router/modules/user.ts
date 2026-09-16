@@ -34,7 +34,7 @@ export const userRoutes: RouteRecordRaw[] = [
   {
     path: '/profile',
     name: 'profile-edit',
-    component: () => import('@/views/user/profile-edit/index.vue'),
+    redirect: '/user/profile',
     meta: { requiresAuth: true },
   },
   {
@@ -77,6 +77,18 @@ export const userRoutes: RouteRecordRaw[] = [
     path: '/ban-appeal',
     name: 'user-ban-appeal',
     component: () => import('@/views/user/ban-appeal/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/online',
+    name: 'online',
+    component: () => import('@/views/user/online/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/online/room',
+    name: 'online-room',
+    component: () => import('@/views/user/online/room.vue'),
     meta: { requiresAuth: true },
   },
 ]

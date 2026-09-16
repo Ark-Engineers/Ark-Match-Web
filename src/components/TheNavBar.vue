@@ -62,7 +62,7 @@ function onDocumentClick(e: MouseEvent) {
 
 function goProfile() {
   closeMenu()
-  router.push('/profile')
+  router.push('/user/profile')
 }
 
 function goNotifications() {
@@ -83,6 +83,11 @@ function goAdmin() {
 function goBanAppeal() {
   closeMenu()
   router.push('/ban-appeal')
+}
+
+function goOnline() {
+  closeMenu()
+  router.push('/online')
 }
 
 async function onLogout() {
@@ -189,6 +194,9 @@ onUnmounted(() => {
             </button>
             <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-200 hover:bg-white/5 transition cursor-pointer" @click="goBanAppeal">
               <span class="w-4 text-center">⚖</span>封禁申诉
+            </button>
+            <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-gray-200 hover:bg-white/5 transition cursor-pointer" @click="goOnline">
+              <span class="w-4 text-center">🌐</span>联机功能
             </button>
             <div class="h-px bg-gray-700/60" />
             <button class="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 transition cursor-pointer" @click="onLogout">

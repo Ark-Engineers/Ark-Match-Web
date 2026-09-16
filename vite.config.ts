@@ -26,6 +26,7 @@ export default defineConfig(({ mode }) => {
         [proxyPrefix]: {
           target: proxyTarget,
           changeOrigin: true,
+          ws: true,
           xfwd: true,
           rewrite: (path: string) => path.replace(new RegExp(`^${proxyPrefix}`), ''),
         },

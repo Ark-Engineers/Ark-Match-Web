@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -12,6 +12,7 @@ type ProfileResponse = {
   userId: number
   account: string
   nickname: string
+  loginEmail: string | null
   avatarUrl: string | null
   avatarCharId: string | null
   avatarCharName: string | null
@@ -70,6 +71,10 @@ const targetUserId = computed(() => {
 })
 
 const isOwner = computed(() => targetUserId.value === selfUserId.value)
+const myRole = computed(() => String(authStore.session?.role || '').toUpperCase())
+const isSuperAdmin = computed(() => myRole.value === 'SUPER_ADMIN')
+const isAdminRole = computed(() => myRole.value === 'ADMIN' || myRole.value === 'SUPER_ADMIN')
+const canEdit = computed(() => isOwner.value && !isSuperAdmin.value)
 
 const form = reactive({
   featuredRole: '',
@@ -84,6 +89,54 @@ const form = reactive({
 })
 
 const profile = ref<ProfileResponse | null>(null)
+
+const security = reactive({
+  nickname: '',
+  nicknameSaving: false,
+  loginEmail: '',
+  password: '',
+  confirmPassword: '',
+  passwordEmailCode: '',
+  passwordCodeSending: false,
+  passwordCodeCooldown: 0,
+  newLoginEmail: '',
+  emailEmailCode: '',
+  emailCodeSending: false,
+  emailCodeCooldown: 0,
+})
+
+let passwordCooldownTimer: number | null = null
+let emailCooldownTimer: number | null = null
+
+function resolveErrorMessage(err: any): string {
+  const msg = err?.response?.data?.message || err?.message
+  return String(msg || '操作失败')
+}
+
+function startCooldown(kind: 'password' | 'email', seconds: number): void {
+  const s = Math.max(0, Math.floor(seconds || 0))
+  if (kind === 'password') {
+    if (passwordCooldownTimer) clearInterval(passwordCooldownTimer)
+    security.passwordCodeCooldown = s
+    passwordCooldownTimer = window.setInterval(() => {
+      security.passwordCodeCooldown = Math.max(0, security.passwordCodeCooldown - 1)
+      if (security.passwordCodeCooldown <= 0 && passwordCooldownTimer) {
+        clearInterval(passwordCooldownTimer)
+        passwordCooldownTimer = null
+      }
+    }, 1000)
+    return
+  }
+  if (emailCooldownTimer) clearInterval(emailCooldownTimer)
+  security.emailCodeCooldown = s
+  emailCooldownTimer = window.setInterval(() => {
+    security.emailCodeCooldown = Math.max(0, security.emailCodeCooldown - 1)
+    if (security.emailCodeCooldown <= 0 && emailCooldownTimer) {
+      clearInterval(emailCooldownTimer)
+      emailCooldownTimer = null
+    }
+  }, 1000)
+}
 
 const avatarDialogOpen = ref(false)
 const avatarOptionsLoading = ref(false)
@@ -140,10 +193,6 @@ async function loadProfile(): Promise<void> {
   try {
     const url = isOwner.value ? '/user/profile' : `/user/profile/${targetUserId.value}`
     const res = await request<ApiResponse<ProfileResponse>>({ url, method: 'GET' })
-    if (res.code !== 0) {
-      ElMessage.error(res.message || '加载失败')
-      return
-    }
     profile.value = res.data
 
     form.featuredRole = res.data.featuredRole || ''
@@ -160,11 +209,16 @@ async function loadProfile(): Promise<void> {
       form.qq = String(res.data.qq || '')
       form.wechat = String(res.data.wechat || '')
       form.email = String(res.data.email || '')
+      security.nickname = String(res.data.nickname || '')
+      security.loginEmail = String(res.data.loginEmail || '')
+      security.newLoginEmail = ''
     } else {
       form.qq = ''
       form.wechat = ''
       form.email = ''
     }
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
   } finally {
     loading.value = false
   }
@@ -202,7 +256,7 @@ async function ensureAvatarOptionsLoaded(): Promise<void> {
 }
 
 async function openAvatarDialog(): Promise<void> {
-  if (!isOwner.value) return
+  if (!canEdit.value) return
   avatarKeyword.value = ''
   avatarPage.value = 1
   avatarTempId.value = selectedAvatarId.value
@@ -230,7 +284,7 @@ function confirmAvatar(): void {
 }
 
 async function save(): Promise<void> {
-  if (!isOwner.value) return
+  if (!canEdit.value) return
   if (saving.value) return
   saving.value = true
   try {
@@ -247,15 +301,119 @@ async function save(): Promise<void> {
       email: form.email.trim() || '',
     }
     const res = await request<ApiResponse<ProfileResponse>>({ url: '/user/profile', method: 'PUT', data: payload })
-    if (res.code !== 0) {
-      ElMessage.error(res.message || '保存失败')
-      return
-    }
     ElMessage.success('已保存')
     profile.value = res.data
     await router.push('/home')
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
   } finally {
     saving.value = false
+  }
+}
+
+async function saveNickname(): Promise<void> {
+  if (!canEdit.value) return
+  const nick = String(security.nickname || '').trim()
+  if (!nick) {
+    ElMessage.warning('昵称不能为空')
+    return
+  }
+  if (nick.length > 64) {
+    ElMessage.warning('昵称长度不能超过64')
+    return
+  }
+  if (security.nicknameSaving) return
+  security.nicknameSaving = true
+  try {
+    await request({ url: '/user/security/nickname', method: 'POST', data: { nickname: nick } })
+    ElMessage.success('昵称已修改')
+    await loadProfile()
+    await authStore.fetchProfile()
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
+  } finally {
+    security.nicknameSaving = false
+  }
+}
+
+async function sendPasswordEmailCode(): Promise<void> {
+  if (!canEdit.value) return
+  if (security.passwordCodeCooldown > 0) return
+  if (security.passwordCodeSending) return
+  security.passwordCodeSending = true
+  try {
+    await request({ url: '/user/security/password/email-code/send', method: 'POST' })
+    ElMessage.success('验证码已发送')
+    startCooldown('password', 60)
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
+  } finally {
+    security.passwordCodeSending = false
+  }
+}
+
+async function changePassword(): Promise<void> {
+  if (!canEdit.value) return
+  const pwd = String(security.password || '')
+  const confirmPwd = String(security.confirmPassword || '')
+  const code = String(security.passwordEmailCode || '').trim()
+  if (pwd.length < 6 || pwd.length > 64) {
+    ElMessage.warning('密码长度需在6~64之间')
+    return
+  }
+  if (pwd !== confirmPwd) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+  if (!/^\d{6}$/.test(code)) {
+    ElMessage.warning('请输入6位邮箱验证码')
+    return
+  }
+  try {
+    await request({ url: '/user/security/password', method: 'POST', data: { password: pwd, emailCode: code } })
+    ElMessage.success('密码已修改，请重新登录')
+    authStore.clearAllClientAuthState()
+    await router.push('/login')
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
+  }
+}
+
+async function sendEmailEmailCode(): Promise<void> {
+  if (!canEdit.value) return
+  if (security.emailCodeCooldown > 0) return
+  if (security.emailCodeSending) return
+  security.emailCodeSending = true
+  try {
+    await request({ url: '/user/security/email/email-code/send', method: 'POST' })
+    ElMessage.success('验证码已发送')
+    startCooldown('email', 60)
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
+  } finally {
+    security.emailCodeSending = false
+  }
+}
+
+async function changeLoginEmail(): Promise<void> {
+  if (!canEdit.value) return
+  const email = String(security.newLoginEmail || '').trim()
+  const code = String(security.emailEmailCode || '').trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    ElMessage.warning('请输入正确的邮箱格式')
+    return
+  }
+  if (!/^\d{6}$/.test(code)) {
+    ElMessage.warning('请输入6位邮箱验证码')
+    return
+  }
+  try {
+    await request({ url: '/user/security/email', method: 'POST', data: { email, emailCode: code } })
+    ElMessage.success('登录邮箱已修改，请重新登录')
+    authStore.clearAllClientAuthState()
+    await router.push('/login')
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
   }
 }
 
@@ -276,6 +434,13 @@ watch(
 onMounted(async () => {
   await loadProfile()
 })
+
+onBeforeUnmount(() => {
+  if (passwordCooldownTimer) clearInterval(passwordCooldownTimer)
+  passwordCooldownTimer = null
+  if (emailCooldownTimer) clearInterval(emailCooldownTimer)
+  emailCooldownTimer = null
+})
 </script>
 
 <template>
@@ -289,11 +454,48 @@ onMounted(async () => {
               <span v-if="profile">账号：{{ profile.account }} / 昵称：{{ profile.nickname }}</span>
             </div>
           </div>
-          <el-button v-if="isOwner" type="primary" :loading="saving" @click="save">保存</el-button>
+          <el-button v-if="canEdit" type="primary" :loading="saving" @click="save">保存</el-button>
         </div>
       </template>
 
       <el-form label-position="top">
+        <div
+          v-if="isOwner && isAdminRole"
+          style="
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid var(--el-color-warning);
+            background: var(--el-color-warning-light-9);
+            margin-bottom: 14px;
+          "
+        >
+          <div style="font-weight: 700; color: var(--el-color-warning)">管理员身份</div>
+          <div style="font-size: 12px; opacity: 0.8; margin-top: 4px">
+            权限等级：{{ myRole === 'SUPER_ADMIN' ? '超级管理员' : '管理员' }}
+          </div>
+        </div>
+
+        <div
+          v-if="isOwner && isSuperAdmin"
+          style="
+            padding: 12px;
+            border-radius: 12px;
+            border: 1px solid var(--el-color-danger);
+            background: var(--el-color-danger-light-9);
+            margin-bottom: 14px;
+          "
+        >
+          <div style="font-weight: 700; color: var(--el-color-danger)">超级管理员账号禁止修改个人资料</div>
+          <div style="font-size: 12px; opacity: 0.85; margin-top: 4px">昵称 / 密码 / 登录邮箱均保持系统预设状态</div>
+        </div>
+
+        <el-form-item v-if="isOwner" label="昵称">
+          <div style="display: flex; gap: 10px; align-items: center; width: 100%">
+            <el-input v-model="security.nickname" :disabled="!canEdit" maxlength="64" show-word-limit />
+            <el-button v-if="canEdit" type="primary" :loading="security.nicknameSaving" @click="saveNickname">修改</el-button>
+          </div>
+        </el-form-item>
+
         <el-form-item label="头像">
           <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
             <div
@@ -321,7 +523,7 @@ onMounted(async () => {
               />
               <span v-else style="font-weight: 700">{{ (profile?.nickname || '').slice(0, 1) }}</span>
             </div>
-            <template v-if="isOwner">
+            <template v-if="canEdit">
               <el-button @click="openAvatarDialog">选择头像</el-button>
               <el-button :disabled="!currentAvatarUrl" @click="clearAvatar">清除</el-button>
             </template>
@@ -329,11 +531,11 @@ onMounted(async () => {
         </el-form-item>
 
         <el-form-item label="主推角色">
-          <el-input v-model="form.featuredRole" :disabled="!isOwner" placeholder="暂时占位，后续再定枚举" clearable />
+          <el-input v-model="form.featuredRole" :disabled="!canEdit" placeholder="暂时占位，后续再定枚举" clearable />
         </el-form-item>
 
         <el-form-item label="个性签名">
-          <el-input v-model="form.signature" :disabled="!isOwner" type="textarea" :rows="3" maxlength="255" show-word-limit />
+          <el-input v-model="form.signature" :disabled="!canEdit" type="textarea" :rows="3" maxlength="255" show-word-limit />
         </el-form-item>
 
         <el-form-item label="地区（省市）">
@@ -341,11 +543,11 @@ onMounted(async () => {
         </el-form-item>
 
         <el-form-item label="生日">
-          <el-date-picker v-model="form.birthday" :disabled="!isOwner" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+          <el-date-picker v-model="form.birthday" :disabled="!canEdit" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
         </el-form-item>
 
         <el-form-item label="生日对外可见">
-          <el-switch v-model="form.birthdayVisible" :disabled="!isOwner" />
+          <el-switch v-model="form.birthdayVisible" :disabled="!canEdit" />
         </el-form-item>
 
         <el-form-item label="年龄">
@@ -354,11 +556,11 @@ onMounted(async () => {
 
         <el-form-item label="Tag（最多3个）">
           <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px">
-            <el-tag v-for="t in form.tags" :key="t" :disable-transitions="true" :closable="isOwner" @close="removeTag(t)">
+            <el-tag v-for="t in form.tags" :key="t" :disable-transitions="true" :closable="canEdit" @close="removeTag(t)">
               {{ t }}
             </el-tag>
           </div>
-          <div v-if="isOwner" style="display: flex; gap: 8px">
+          <div v-if="canEdit" style="display: flex; gap: 8px">
             <el-input v-model="form.tagInput" placeholder="输入标签后回车或点击添加" maxlength="16" @keyup.enter="addTag" />
             <el-button :disabled="form.tags.length >= 3" @click="addTag">添加</el-button>
           </div>
@@ -367,13 +569,56 @@ onMounted(async () => {
         <template v-if="isOwner">
           <el-divider />
           <el-form-item label="QQ">
-            <el-input v-model="form.qq" clearable />
+            <el-input v-model="form.qq" :disabled="!canEdit" clearable />
           </el-form-item>
           <el-form-item label="微信">
-            <el-input v-model="form.wechat" clearable />
+            <el-input v-model="form.wechat" :disabled="!canEdit" clearable />
           </el-form-item>
-          <el-form-item label="邮箱">
-            <el-input v-model="form.email" clearable />
+          <el-form-item label="联系邮箱">
+            <el-input v-model="form.email" :disabled="!canEdit" clearable />
+          </el-form-item>
+        </template>
+
+        <template v-if="canEdit">
+          <el-divider />
+          <el-form-item label="修改密码（需邮箱验证码）">
+            <div style="display: flex; flex-direction: column; gap: 10px; width: 100%">
+              <el-input v-model="security.password" type="password" show-password placeholder="新密码（6~64位）" />
+              <el-input v-model="security.confirmPassword" type="password" show-password placeholder="确认新密码" />
+              <div style="display: flex; gap: 10px; align-items: center">
+                <el-input v-model="security.passwordEmailCode" placeholder="邮箱验证码（6位）" maxlength="6" style="flex: 1" />
+                <el-button
+                  :loading="security.passwordCodeSending"
+                  :disabled="security.passwordCodeCooldown > 0"
+                  @click="sendPasswordEmailCode"
+                >
+                  {{ security.passwordCodeCooldown > 0 ? `${security.passwordCodeCooldown}s` : '获取验证码' }}
+                </el-button>
+              </div>
+              <div>
+                <el-button type="primary" @click="changePassword">提交修改</el-button>
+              </div>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="修改登录邮箱（需邮箱验证码）">
+            <div style="display: flex; flex-direction: column; gap: 10px; width: 100%">
+              <el-input :model-value="security.loginEmail" disabled />
+              <el-input v-model="security.newLoginEmail" placeholder="新登录邮箱" clearable />
+              <div style="display: flex; gap: 10px; align-items: center">
+                <el-input v-model="security.emailEmailCode" placeholder="邮箱验证码（6位）" maxlength="6" style="flex: 1" />
+                <el-button
+                  :loading="security.emailCodeSending"
+                  :disabled="security.emailCodeCooldown > 0"
+                  @click="sendEmailEmailCode"
+                >
+                  {{ security.emailCodeCooldown > 0 ? `${security.emailCodeCooldown}s` : '获取验证码' }}
+                </el-button>
+              </div>
+              <div>
+                <el-button type="primary" @click="changeLoginEmail">提交修改</el-button>
+              </div>
+            </div>
           </el-form-item>
         </template>
       </el-form>
