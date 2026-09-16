@@ -79,8 +79,8 @@ const entryCards = computed(() => [
     icon: '🎯',
     desc: '查看你的匹配池状态与活跃问卷',
     route: '/match-status',
-    badge: auth.profile?.isInPool ? '已入池' : '未入池',
-    badgeColor: auth.profile?.isInPool ? 'text-green-400 bg-green-500/10' : 'text-gray-500 bg-gray-800',
+    badge: surveyStore.currentState?.hasActiveAnswer ? '已入池' : '未入池',
+    badgeColor: surveyStore.currentState?.hasActiveAnswer ? 'text-green-400 bg-green-500/10' : 'text-gray-500 bg-gray-800',
   },
   {
     title: '待处理匹配',

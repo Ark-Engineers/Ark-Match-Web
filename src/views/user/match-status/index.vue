@@ -43,12 +43,12 @@ onMounted(async () => {
             <div>
               <h3 class="text-white font-semibold text-sm">匹配池状态</h3>
               <p class="text-gray-500 text-xs mt-1">
-                {{ auth.profile?.isInPool ? '你已加入匹配池，系统将自动为你匹配' : '你尚未加入匹配池，请先完成问卷' }}
+                {{ surveyStore.currentState?.hasActiveAnswer ? '你已加入匹配池，系统将自动为你匹配' : '你尚未加入匹配池，请先完成问卷' }}
               </p>
             </div>
             <span class="px-3 py-1 rounded-full text-xs font-medium"
-                  :class="auth.profile?.isInPool ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-500 border border-gray-700'">
-              {{ auth.profile?.isInPool ? '已入池' : '未入池' }}
+                  :class="surveyStore.currentState?.hasActiveAnswer ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-500 border border-gray-700'">
+              {{ surveyStore.currentState?.hasActiveAnswer ? '已入池' : '未入池' }}
             </span>
           </div>
         </UiCard>

@@ -12,7 +12,6 @@ export interface UserProfile {
   gender: string
   bio: string | null
   birthYear: number | null
-  isInPool: boolean
   status: string
   featuredRole?: string | null
   signature?: string | null
