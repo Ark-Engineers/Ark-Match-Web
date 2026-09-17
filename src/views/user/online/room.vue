@@ -1,13 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import 'pixi-spine'
 import * as PIXI from 'pixi.js'
 import { Spine } from 'pixi-spine'
 import { ElMessage } from 'element-plus'
 
+import { request } from '@/api'
+import { getPublicProfile, resolveArkAvatarUrl, type UserProfile } from '@/api/user'
 import { API_BASE_URL } from '@/config'
 import { useAuthStore } from '@/stores/auth'
+
+type ApiResponse<T> = { code: number; message: string; data: T }
+
+type SpineOption = {
+  assetKey: string
+  name: string
+  skelUrl: string
+}
 
 type PlayerState = {
   clientId: string
@@ -56,12 +66,24 @@ type SnapshotMsg = {
 
 type CtrlPongMsg = { type: 'pong'; ts: number; serverTs?: number }
 
-type WsMsg = WelcomeMsg | SnapshotMsg | { type: 'player_join'; player: SnapshotPlayer } | { type: 'player_leave'; clientId: string } | { type: 'host_fps'; fps: number } | { type: 'host_change'; hostClientId: string | null; hostFps: number } | CtrlPongMsg
+type WsMsg =
+  | WelcomeMsg
+  | SnapshotMsg
+  | { type: 'player_join'; player: SnapshotPlayer }
+  | { type: 'player_leave'; clientId: string }
+  | { type: 'player_update'; player: SnapshotPlayer }
+  | { type: 'emote'; clientId: string; emote: string }
+  | { type: 'room_offline' }
+  | { type: 'error'; code: string; message: string }
+  | { type: 'host_fps'; fps: number }
+  | { type: 'host_change'; hostClientId: string | null; hostFps: number }
+  | CtrlPongMsg
 
 type RenderedPlayer = {
   state: PlayerState
   spine: Spine
   label: PIXI.Text
+  hit: PIXI.Container
   baseBounds: PIXI.Rectangle
   scale: number
   target: { x: number; y: number }
@@ -82,6 +104,10 @@ const assetKey = computed(() => String(route.query.assetKey || '').trim())
 
 const wrapRef = ref<HTMLDivElement | null>(null)
 let app: PIXI.Application | null = null
+let worldLayer: PIXI.Container | null = null
+let guideGfx: PIXI.Graphics | null = null
+let lastViewW = 0
+let lastViewH = 0
 let socket: WebSocket | null = null
 let ctrlSocket: WebSocket | null = null
 
@@ -111,7 +137,64 @@ let recvBytes = 0
 const hostClientId = ref<string | null>(null)
 const hostFps = ref(60)
 
+const spineOptions = ref<SpineOption[]>([])
+const selectedAssetKey = ref('')
+
 const players = new Map<string, RenderedPlayer>()
+const loadingPlayers = new Set<string>()
+
+const profileCache = new Map<number, UserProfile>()
+const cardVisible = ref(false)
+const cardLoading = ref(false)
+const cardProfile = ref<UserProfile | null>(null)
+const cardPos = ref({ x: 0, y: 0 })
+const emoteCooldown = new Map<string, number>()
+
+function roleLabel(role: string | null | undefined): string {
+  const r = String(role || '').toUpperCase()
+  if (r === 'SUPER_ADMIN') return '超级管理员'
+  if (r === 'ADMIN') return '管理员'
+  return '普通用户'
+}
+
+function openProfileCard(userId: number, clientX: number, clientY: number): void {
+  const w = window.innerWidth || 1
+  const h = window.innerHeight || 1
+  const cardW = 300
+  const cardH = 180
+  let x = Math.round(clientX + 14)
+  let y = Math.round(clientY - 10)
+  if (x + cardW > w - 8) x = Math.round(clientX - cardW - 14)
+  if (x < 8) x = 8
+  if (y + cardH > h - 8) y = Math.max(8, h - cardH - 8)
+  if (y < 8) y = 8
+
+  cardPos.value = { x, y }
+  cardVisible.value = true
+  cardLoading.value = false
+
+  const cached = profileCache.get(userId) || null
+  cardProfile.value = cached
+  if (cached) return
+
+  cardLoading.value = true
+  void (async () => {
+    try {
+      const p = await getPublicProfile(userId)
+      profileCache.set(userId, p)
+      if (cardVisible.value) cardProfile.value = p
+    } catch {
+    } finally {
+      if (cardVisible.value) cardLoading.value = false
+    }
+  })()
+}
+
+function closeProfileCard(): void {
+  cardVisible.value = false
+  cardLoading.value = false
+  cardProfile.value = null
+}
 
 const keyDown = new Set<string>()
 let shiftPressed = false
@@ -155,6 +238,38 @@ function wsUrl(path: string, query: Record<string, string>): string {
   return `${proto}//${host}${p}${path}?${search.toString()}`
 }
 
+async function loadSpineOptions(): Promise<void> {
+  if (spineOptions.value.length > 0) return
+  try {
+    const res = await request<ApiResponse<SpineOption[]>>({
+      url: '/user/spine/list',
+      method: 'GET',
+    })
+    if (res.code !== 0) return
+    spineOptions.value = res.data || []
+    if (!selectedAssetKey.value) {
+      selectedAssetKey.value = assetKey.value || spineOptions.value[0]?.assetKey || ''
+    }
+  } catch {}
+}
+
+async function applyAvatarChange(nextKey: string): Promise<void> {
+  const key = String(nextKey || '').trim()
+  if (!key) return
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    ElMessage.warning('连接未建立')
+    return
+  }
+  const me = myClientId ? players.get(myClientId) : null
+  if (me && me.state.assetKey !== key) {
+    try {
+      await replacePlayerSpine(me, key)
+    } catch {}
+  }
+  selectedAssetKey.value = key
+  wsSend({ type: 'change_avatar', assetKey: key })
+}
+
 function pickDefaultAnimation(list: string[]): string {
   const l = list.map((x) => String(x || '')).filter(Boolean)
   const lower = l.map((x) => x.toLowerCase())
@@ -178,31 +293,79 @@ function pickMoveAnimation(list: string[]): string {
   return ''
 }
 
-async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
-  if (!app) return null
-  const skel = apiUrl(`/assets/spine/${p.assetKey}/${p.assetKey}.skel`)
+function pickInteractAnimation(list: string[]): string {
+  const l = list.map((x) => String(x || '')).filter(Boolean)
+  const lower = l.map((x) => x.toLowerCase())
+  const pick = (candidates: string[]): string => {
+    for (const c of candidates) {
+      const idx = lower.findIndex((x) => x === c || x.includes(c))
+      if (idx >= 0) return l[idx] || ''
+    }
+    return ''
+  }
+  return pick(['interact', 'interaction', 'touch', 'talk', 'greet'])
+}
+
+async function createSpineByAssetKey(assetKey: string): Promise<{
+  spine: Spine
+  baseBounds: PIXI.Rectangle
+  scale: number
+  idleAnim: string
+  moveAnim: string
+  interactAnim: string
+}> {
+  const skel = apiUrl(`/assets/spine/${assetKey}/${assetKey}.skel`)
   const resource: any = await PIXI.Assets.load(skel)
   const sp = new Spine(resource.spineData)
   sp.autoUpdate = true
   const anims = (sp as any)?.spineData?.animations?.map((a: any) => String(a?.name || '')).filter(Boolean) || []
   const idle = pickDefaultAnimation(anims)
   const moveAnim = pickMoveAnimation(anims)
+  const interactAnim = pickInteractAnimation(anims)
   if (idle) sp.state.setAnimation(0, idle, true)
   if (idle && moveAnim) {
     ;(sp.stateData as any).setMix(idle, moveAnim, 0.12)
     ;(sp.stateData as any).setMix(moveAnim, idle, 0.12)
   }
+  if (interactAnim) {
+    if (idle) {
+      ;(sp.stateData as any).setMix(idle, interactAnim, 0.12)
+      ;(sp.stateData as any).setMix(interactAnim, idle, 0.12)
+    }
+    if (moveAnim) {
+      ;(sp.stateData as any).setMix(moveAnim, interactAnim, 0.12)
+      ;(sp.stateData as any).setMix(interactAnim, moveAnim, 0.12)
+    }
+  }
   try {
     ;(sp as any).update(0)
   } catch {}
   const bounds = sp.getLocalBounds()
-  const viewW = Math.max(1, app.renderer.width)
-  const viewH = Math.max(1, app.renderer.height)
   const bw = Math.max(1, bounds.width)
   const bh = Math.max(1, bounds.height)
   const scale = Math.min(180 / bw, 220 / bh)
   sp.scale.set(scale, scale)
-  app.stage.addChild(sp)
+  return { spine: sp, baseBounds: bounds, scale, idleAnim: idle, moveAnim, interactAnim }
+}
+
+async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
+  if (!app || !worldLayer) return null
+  const built = await createSpineByAssetKey(p.assetKey)
+  const sp = built.spine
+  const bounds = built.baseBounds
+  const bw = Math.max(1, bounds.width)
+  const bh = Math.max(1, bounds.height)
+  const scale = built.scale
+  worldLayer.addChild(sp)
+
+  const hit = new PIXI.Graphics()
+  hit.beginFill(0xffffff, 0)
+  hit.drawRect(bounds.x, bounds.y, bw, bh)
+  hit.endFill()
+  ;(hit as any).eventMode = 'static'
+  ;(hit as any).cursor = 'pointer'
+  hit.hitArea = new PIXI.Rectangle(bounds.x, bounds.y, bw, bh)
+  worldLayer.addChild(hit)
 
   const label = new PIXI.Text(p.nickname || '', {
     fill: '#e5e7eb',
@@ -212,7 +375,9 @@ async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
     strokeThickness: 4,
   })
   label.anchor.set(0.5, 1)
-  app.stage.addChild(label)
+  ;(label as any).eventMode = 'static'
+  ;(label as any).cursor = 'pointer'
+  worldLayer.addChild(label)
 
   const rp: RenderedPlayer = {
     state: {
@@ -220,23 +385,103 @@ async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
       userId: p.userId,
       nickname: p.nickname,
       assetKey: p.assetKey,
-      x: p.x || viewW / 2,
-      y: p.y || viewH / 2,
+      x: p.x || worldW / 2,
+      y: p.y || worldH / 2,
       moving: Boolean(p.moving),
       dir: p.dir === -1 ? -1 : 1,
     },
     spine: sp,
     label,
+    hit,
     baseBounds: bounds,
     scale,
-    target: { x: p.x || viewW / 2, y: p.y || viewH / 2 },
-    idleAnim: idle,
-    moveAnim,
-    lastAnim: idle,
+    target: { x: p.x || worldW / 2, y: p.y || worldH / 2 },
+    idleAnim: built.idleAnim,
+    moveAnim: built.moveAnim,
+    lastAnim: built.idleAnim,
     buffer: [],
   }
+  hit.on('pointertap', (e: any) => {
+    onPlayerTap(rp, e)
+  })
+  label.on('pointertap', (e: any) => {
+    onPlayerTap(rp, e)
+  })
   applyState(rp, worldW, worldH, true)
   return rp
+}
+
+async function replacePlayerSpine(rp: RenderedPlayer, nextAssetKey: string): Promise<void> {
+  if (!app || !worldLayer) return
+  if (!nextAssetKey || rp.state.assetKey === nextAssetKey) return
+  const built = await createSpineByAssetKey(nextAssetKey)
+  const prev = rp.spine
+  try {
+    worldLayer.addChild(built.spine)
+  } catch {}
+  try {
+    worldLayer.removeChild(prev)
+  } catch {}
+  try {
+    prev.destroy({ children: true, texture: false, baseTexture: false } as any)
+  } catch {}
+
+  rp.spine = built.spine
+  rp.baseBounds = built.baseBounds
+  rp.scale = built.scale
+  rp.idleAnim = built.idleAnim
+  rp.moveAnim = built.moveAnim
+  rp.lastAnim = built.idleAnim
+  rp.state.assetKey = nextAssetKey
+  try {
+    const b = rp.baseBounds
+    const bw = Math.max(1, b.width)
+    const bh = Math.max(1, b.height)
+    const gfx = rp.hit as any
+    gfx.clear()
+    gfx.beginFill(0xffffff, 0)
+    gfx.drawRect(b.x, b.y, bw, bh)
+    gfx.endFill()
+    rp.hit.hitArea = new PIXI.Rectangle(b.x, b.y, bw, bh)
+  } catch {}
+  applyState(rp, worldW, worldH, true)
+}
+
+function updateViewport(): void {
+  if (!app || !worldLayer) return
+  const vw = Math.max(1, app.renderer.width)
+  const vh = Math.max(1, app.renderer.height)
+  const scale = Math.min(vw / Math.max(1, worldW), vh / Math.max(1, worldH))
+  const ox = Math.round((vw - worldW * scale) / 2)
+  const oy = Math.round((vh - worldH * scale) / 2)
+  worldLayer.scale.set(scale, scale)
+  worldLayer.position.set(ox, oy)
+
+  if (guideGfx) {
+    guideGfx.clear()
+    guideGfx.lineStyle(2, 0xffffff, 0.35)
+    guideGfx.drawRect(1, 1, worldW - 2, worldH - 2)
+
+    guideGfx.lineStyle(1.5, 0xffffff, 0.18)
+    const x1 = Math.round(worldW * 0.25)
+    const x2 = Math.round(worldW * 0.5)
+    const x3 = Math.round(worldW * 0.75)
+    const y1 = Math.round(worldH * 0.25)
+    const y2 = Math.round(worldH * 0.5)
+    const y3 = Math.round(worldH * 0.75)
+    guideGfx.moveTo(x1, 0)
+    guideGfx.lineTo(x1, worldH)
+    guideGfx.moveTo(x2, 0)
+    guideGfx.lineTo(x2, worldH)
+    guideGfx.moveTo(x3, 0)
+    guideGfx.lineTo(x3, worldH)
+    guideGfx.moveTo(0, y1)
+    guideGfx.lineTo(worldW, y1)
+    guideGfx.moveTo(0, y2)
+    guideGfx.lineTo(worldW, y2)
+    guideGfx.moveTo(0, y3)
+    guideGfx.lineTo(worldW, y3)
+  }
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -250,6 +495,41 @@ function lerp(a: number, b: number, t: number): number {
   if (t <= 0) return a
   if (t >= 1) return b
   return a + (b - a) * t
+}
+
+function playInteract(rp: RenderedPlayer): void {
+  const names =
+    (rp.spine as any)?.spineData?.animations?.map((a: any) => String(a?.name || '')).filter(Boolean) || []
+  const anim = pickInteractAnimation(names)
+  if (!anim) return
+  try {
+    rp.spine.state.setAnimation(0, anim, false)
+    const idle = rp.idleAnim || anim
+    rp.spine.state.addAnimation(0, idle, true, 0)
+  } catch {}
+}
+
+function sendEmote(targetClientId: string, emote: string): void {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  const cid = String(targetClientId || '').trim()
+  if (!cid) return
+  const e = String(emote || '').trim()
+  if (!e) return
+  const k = `${cid}|${e}`
+  const now = Date.now()
+  const last = emoteCooldown.get(k) || 0
+  if (now - last < 600) return
+  emoteCooldown.set(k, now)
+  wsSend({ type: 'emote', clientId: cid, emote: e })
+}
+
+function onPlayerTap(rp: RenderedPlayer, e: any): void {
+  playInteract(rp)
+  sendEmote(rp.state.clientId, 'interact')
+  const ne = (e as any)?.nativeEvent as PointerEvent | undefined
+  const cx = Number(ne?.clientX ?? 0)
+  const cy = Number(ne?.clientY ?? 0)
+  if (rp.state.userId) openProfileCard(rp.state.userId, cx, cy)
 }
 
 function applyState(rp: RenderedPlayer, wW: number, wH: number, snap = false): void {
@@ -277,6 +557,10 @@ function applyState(rp: RenderedPlayer, wW: number, wH: number, snap = false): v
   rp.spine.scale.y = rp.scale
   rp.spine.x = rp.target.x - bx * rp.spine.scale.x
   rp.spine.y = rp.target.y - by * rp.scale
+  rp.hit.scale.x = rp.spine.scale.x
+  rp.hit.scale.y = rp.scale
+  rp.hit.x = rp.spine.x
+  rp.hit.y = rp.spine.y
   if (rp.label.text !== rp.state.nickname) rp.label.text = rp.state.nickname || ''
   rp.label.x = rp.target.x
   rp.label.y = rp.target.y - halfH - 8
@@ -381,6 +665,13 @@ function sampleRemote(rp: RenderedPlayer, targetServerTs: number): void {
 
 function tick(): void {
   if (!app) return
+  const vw = app.renderer.width
+  const vh = app.renderer.height
+  if (vw !== lastViewW || vh !== lastViewH) {
+    lastViewW = vw
+    lastViewH = vh
+    updateViewport()
+  }
   const dt = Math.min(0.05, app.ticker.deltaMS / 1000)
   fpsCounter += 1
 
@@ -468,32 +759,67 @@ async function ensurePlayer(p: SnapshotPlayer): Promise<void> {
   const existed = players.get(p.clientId)
   if (existed) {
     existed.state.nickname = p.nickname
-    existed.state.assetKey = p.assetKey
+    if (p.assetKey && existed.state.assetKey !== p.assetKey) {
+      try {
+        await replacePlayerSpine(existed, p.assetKey)
+      } catch {}
+    } else {
+      existed.state.assetKey = p.assetKey
+    }
     return
   }
+  if (loadingPlayers.has(p.clientId)) return
+  loadingPlayers.add(p.clientId)
   try {
     const rp = await createPlayer(p)
     if (!rp) return
+    const already = players.get(p.clientId)
+    if (already) {
+      try {
+        worldLayer?.removeChild(rp.spine)
+        worldLayer?.removeChild(rp.hit)
+        worldLayer?.removeChild(rp.label)
+        rp.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+        rp.hit.destroy()
+        rp.label.destroy()
+      } catch {}
+      return
+    }
     players.set(p.clientId, rp)
   } catch {
     if (p.clientId === myClientId) ElMessage.error('角色加载失败')
+  } finally {
+    loadingPlayers.delete(p.clientId)
   }
 }
 
 function removePlayer(clientId: string): void {
-  if (!app) return
+  if (!app || !worldLayer) return
   const rp = players.get(clientId)
   if (!rp) return
   try {
-    app.stage.removeChild(rp.spine)
-    app.stage.removeChild(rp.label)
+    worldLayer.removeChild(rp.spine)
+    worldLayer.removeChild(rp.hit)
+    worldLayer.removeChild(rp.label)
     rp.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+    rp.hit.destroy()
     rp.label.destroy()
   } catch {}
   players.delete(clientId)
+  loadingPlayers.delete(clientId)
 }
 
 function handleMsg(m: WsMsg): void {
+  if (m.type === 'error') {
+    ElMessage.error(m.message || '进入房间失败')
+    router.push('/online')
+    return
+  }
+  if (m.type === 'room_offline') {
+    ElMessage.warning('房间已下线')
+    router.push('/online')
+    return
+  }
   if (m.type === 'pong') {
     const rtt = performance.now() - Number(m.ts || 0)
     ping.value = Number.isFinite(rtt) ? Math.max(0, Math.round(rtt)) : null
@@ -511,6 +837,12 @@ function handleMsg(m: WsMsg): void {
     worldH = Math.max(1, Number(m.worldH || 1080))
     tickHz = Math.max(10, Math.min(60, Number(m.tickHz || 30)))
     if (m.serverTs) serverClockOffsetMs = Number(m.serverTs) - Date.now()
+    updateViewport()
+
+    const incomingIds = new Set((m.players || []).map((x) => x.clientId))
+    for (const id of players.keys()) {
+      if (!incomingIds.has(id)) removePlayer(id)
+    }
 
     hostClientId.value = m.hostClientId || null
     hostFps.value = Math.max(30, Math.min(120, Number(m.hostFps || 60)))
@@ -527,6 +859,7 @@ function handleMsg(m: WsMsg): void {
 
     const meSnap = (m.players || []).find((x) => x.clientId === myClientId)
     if (meSnap) {
+      selectedAssetKey.value = meSnap.assetKey || selectedAssetKey.value
       lastAckSeq = Math.max(lastAckSeq, Number(meSnap.seq || 0))
       while (pendingInputs.length && pendingInputs[0]!.seq <= lastAckSeq) {
         pendingInputs.shift()
@@ -600,8 +933,19 @@ function handleMsg(m: WsMsg): void {
     void ensurePlayer(m.player)
     return
   }
+  if (m.type === 'player_update') {
+    void ensurePlayer(m.player)
+    return
+  }
   if (m.type === 'player_leave') {
     removePlayer(m.clientId)
+    return
+  }
+  if (m.type === 'emote') {
+    const rp = players.get(m.clientId)
+    if (rp && String(m.emote || '').toLowerCase() === 'interact') {
+      playInteract(rp)
+    }
     return
   }
 }
@@ -630,6 +974,8 @@ async function connect(): Promise<void> {
       await auth.fetchProfile()
     } catch {}
   }
+  await loadSpineOptions()
+  if (!selectedAssetKey.value) selectedAssetKey.value = assetKey.value
   const myNickname = String(auth.nickname || (auth as any).profile?.nickname || '').trim() || `玩家${auth.userId}`
 
   if (!ctrlSocket || ctrlSocket.readyState === WebSocket.CLOSED) {
@@ -656,7 +1002,10 @@ async function connect(): Promise<void> {
 
     socket.onopen = () => {
       reconnectAttempt = 0
-      const join: any = { type: 'join', roomId: roomId.value, assetKey: assetKey.value, nickname: myNickname }
+      const joinAssetKey = String(selectedAssetKey.value || assetKey.value || '').trim()
+      const join: any = { type: 'join', roomId: roomId.value, assetKey: joinAssetKey, nickname: myNickname }
+      const pw = String(sessionStorage.getItem(`online_room_pw_${roomId.value}`) || '').trim()
+      if (pw) join.password = pw
       if (myClientId && myResumeKey) {
         join.clientId = myClientId
         join.resumeKey = myResumeKey
@@ -681,6 +1030,7 @@ async function connect(): Promise<void> {
 }
 
 function destroy(): void {
+  if (destroyed) return
   destroyed = true
   stopFpsPing()
   if (reconnectTimer) {
@@ -695,6 +1045,11 @@ function destroy(): void {
   }
   if (socket) {
     try {
+      if (socket.readyState === WebSocket.OPEN && myClientId) {
+        wsSend({ type: 'leave' })
+      }
+    } catch {}
+    try {
       socket.close()
     } catch {}
     socket = null
@@ -706,13 +1061,23 @@ function destroy(): void {
   }
   for (const rp of players.values()) {
     try {
-      app?.stage.removeChild(rp.spine)
-      app?.stage.removeChild(rp.label)
+      worldLayer?.removeChild(rp.spine)
+      worldLayer?.removeChild(rp.hit)
+      worldLayer?.removeChild(rp.label)
       rp.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+      rp.hit.destroy()
       rp.label.destroy()
     } catch {}
   }
   players.clear()
+  if (worldLayer) {
+    try {
+      app?.stage.removeChild(worldLayer)
+      worldLayer.destroy({ children: true } as any)
+    } catch {}
+    worldLayer = null
+    guideGfx = null
+  }
   if (app) {
     app.destroy(true, { children: true, texture: false, baseTexture: false })
     app = null
@@ -729,12 +1094,30 @@ function initPixi(): void {
   const w = Math.max(1, el.clientWidth)
   const h = Math.max(1, el.clientHeight)
   app.renderer.resize(w, h)
+  lastViewW = app.renderer.width
+  lastViewH = app.renderer.height
+  worldLayer = new PIXI.Container()
+  guideGfx = new PIXI.Graphics()
+  worldLayer.addChild(guideGfx)
+  app.stage.addChild(worldLayer)
+  updateViewport()
   app.ticker.add(tick)
 }
 
 function back(): void {
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
+  closeProfileCard()
+  destroy()
   router.push('/home')
 }
+
+onBeforeRouteLeave(() => {
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
+  closeProfileCard()
+  destroy()
+})
 
 onMounted(() => {
   if (!assetKey.value) {
@@ -743,6 +1126,7 @@ onMounted(() => {
     return
   }
   simNetLagMs = Math.max(0, Math.min(300, Number(route.query.lag || 0)))
+  selectedAssetKey.value = assetKey.value
   destroyed = false
   initPixi()
   void connect()
@@ -753,12 +1137,58 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  closeProfileCard()
   destroy()
 })
 </script>
 
 <template>
   <div class="relative min-h-screen bg-[#0b1220] overflow-hidden">
+    <div
+      v-if="cardVisible"
+      class="absolute z-20 w-[300px] rounded-xl border border-white/10 bg-black/70 backdrop-blur-md text-gray-100 p-3"
+      :style="{ left: `${cardPos.x}px`, top: `${cardPos.y}px` }"
+    >
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="text-sm font-semibold truncate">
+            {{ cardProfile?.nickname || '加载中…' }}
+          </div>
+          <div class="mt-0.5 text-xs text-gray-400">
+            {{ roleLabel(cardProfile?.role) }}
+          </div>
+        </div>
+        <button
+          class="h-7 w-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
+          @click="closeProfileCard"
+        >
+          ×
+        </button>
+      </div>
+
+      <div v-if="cardLoading" class="mt-3 text-sm text-gray-300">加载中…</div>
+
+      <div v-else class="mt-3 flex items-start gap-3">
+        <img
+          v-if="cardProfile"
+          class="h-14 w-14 rounded-lg object-cover bg-white/5 border border-white/10"
+          :src="resolveArkAvatarUrl(cardProfile.avatarCharId, cardProfile.avatarUrl) || ''"
+          alt=""
+        />
+        <div class="min-w-0 flex-1">
+          <div class="text-xs text-gray-300 truncate">
+            {{ cardProfile?.region || '-' }}
+          </div>
+          <div class="mt-1 text-xs text-gray-300 truncate">
+            {{ cardProfile?.gender || '-' }} · {{ cardProfile?.age ?? '-' }}
+          </div>
+          <div class="mt-2 text-xs text-gray-400 line-clamp-2">
+            {{ cardProfile?.signature || cardProfile?.bio || '暂无简介' }}
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="absolute right-6 top-6 z-10">
       <button
         class="mb-3 w-full px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
@@ -775,6 +1205,22 @@ onBeforeUnmount(() => {
         <div class="mt-1 flex items-center gap-4">
           <div class="text-sm">上行 {{ netUp }}KB/s</div>
           <div class="text-sm">下行 {{ netDown }}KB/s</div>
+        </div>
+        <div class="mt-2 flex items-center gap-2">
+          <select
+            v-model="selectedAssetKey"
+            class="h-9 flex-1 px-2 rounded-lg bg-white/5 border border-white/10 text-gray-100 outline-none focus:border-cyan-400/60"
+          >
+            <option v-for="o in spineOptions" :key="o.assetKey" :value="o.assetKey">
+              {{ o.name || o.assetKey }}
+            </option>
+          </select>
+          <button
+            class="h-9 px-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
+            @click="applyAvatarChange(selectedAssetKey)"
+          >
+            切换
+          </button>
         </div>
       </div>
     </div>
