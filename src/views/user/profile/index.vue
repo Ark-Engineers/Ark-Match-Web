@@ -5,6 +5,10 @@ import { ElMessage } from 'element-plus'
 
 import { request } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { getArknightsAvatarOptions, type AvatarOption } from '@/api/arknights-avatar'
+import { resolveArkAvatarUrl } from '@/api/user'
+
+import ArknightsBindSection from './ArknightsBindSection.vue'
 
 type ApiResponse<T> = { code: number; message: string; data: T }
 
@@ -39,13 +43,6 @@ type UpdateProfileRequest = {
   qq?: string | null
   wechat?: string | null
   email?: string | null
-}
-
-type AvatarOption = {
-  id: string
-  name: string
-  rarity: number | null
-  avatarUrl: string
 }
 
 const authStore = useAuthStore()
@@ -151,13 +148,9 @@ const selectedAvatarName = ref<string | null>(null)
 const avatarTempId = ref<string | null>(null)
 const avatarTempName = ref<string | null>(null)
 
-function buildAvatarUrl(id: string): string {
-  return `https://web.hycdn.cn/arknights/game/assets/char/avatar/${id}.png`
-}
-
 const currentAvatarUrl = computed(() => {
   if (avatarTouched.value) {
-    return selectedAvatarId.value ? buildAvatarUrl(selectedAvatarId.value) : null
+    return selectedAvatarId.value ? resolveArkAvatarUrl(selectedAvatarId.value, null) : null
   }
   return profile.value?.avatarUrl || null
 })
@@ -244,12 +237,9 @@ async function ensureAvatarOptionsLoaded(): Promise<void> {
   if (avatarOptions.value.length > 0) return
   avatarOptionsLoading.value = true
   try {
-    const res = await request<ApiResponse<AvatarOption[]>>({ url: '/user/profile/avatar-options', method: 'GET' })
-    if (res.code !== 0) {
-      ElMessage.error(res.message || '加载头像列表失败')
-      return
-    }
-    avatarOptions.value = Array.isArray(res.data) ? res.data : []
+    avatarOptions.value = await getArknightsAvatarOptions()
+  } catch (e: any) {
+    ElMessage.error(resolveErrorMessage(e))
   } finally {
     avatarOptionsLoading.value = false
   }
@@ -578,6 +568,8 @@ onBeforeUnmount(() => {
             <el-input v-model="form.email" :disabled="!canEdit" clearable />
           </el-form-item>
         </template>
+
+        <ArknightsBindSection v-if="isOwner" :editable="canEdit" />
 
         <template v-if="canEdit">
           <el-divider />

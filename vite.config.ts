@@ -21,17 +21,42 @@ export default defineConfig(({ mode }) => {
   const proxyPrefix = env.VITE_PROXY_PREFIX || '/api'
   const proxyTarget = env.VITE_PROXY_TARGET
 
-  const proxy = proxyTarget
-    ? {
-        [proxyPrefix]: {
-          target: proxyTarget,
-          changeOrigin: true,
-          ws: true,
-          xfwd: true,
-          rewrite: (path: string) => path.replace(new RegExp(`^${proxyPrefix}`), ''),
-        },
-      }
-    : undefined
+  const proxy: Record<string, any> = {
+    '/thirdparty/hg': {
+      target: 'https://as.hypergryph.com',
+      changeOrigin: true,
+      secure: true,
+      rewrite: (path: string) => path.replace(/^\/thirdparty\/hg/, ''),
+    },
+    '/thirdparty/skland': {
+      target: 'https://zonai.skland.com',
+      changeOrigin: true,
+      secure: true,
+      rewrite: (path: string) => path.replace(/^\/thirdparty\/skland/, ''),
+    },
+    '/thirdparty/fp': {
+      target: 'https://fp-it.portal101.cn',
+      changeOrigin: true,
+      secure: true,
+      rewrite: (path: string) => path.replace(/^\/thirdparty\/fp/, ''),
+      // 设备指纹服务按来源校验，剥离浏览器自动携带的 Origin/Referer（对齐无浏览器头的脚本行为）
+      configure: (proxy: any) => {
+        proxy.on('proxyReq', (proxyReq: any) => {
+          proxyReq.removeHeader('origin')
+          proxyReq.removeHeader('referer')
+        })
+      },
+    },
+  }
+  if (proxyTarget) {
+    proxy[proxyPrefix] = {
+      target: proxyTarget,
+      changeOrigin: true,
+      ws: true,
+      xfwd: true,
+      rewrite: (path: string) => path.replace(new RegExp(`^${proxyPrefix}`), ''),
+    }
+  }
 
   const envLogPlugin = {
     name: 'env-log',

@@ -139,6 +139,8 @@ vite.config.ts / envDir=env
 
 - 鉴权：`request.ts` 拦截器自动注入 `Authorization`；`401` 自动清登录态，重登返回落地页。
 - 头像资源：干员头像 CDN `https://web.hycdn.cn/arknights/game/assets/char/avatar/{charId}.png`（前端按 `charId` 拼 URL，无 `charId` 回落后端 `avatarUrl`）。
+- 头像列表：前端直连森空岛干员图鉴接口获取（`src/api/arknights-avatar.ts`，skland 开放跨域，无需后端代理）。
+- 官方账号绑定：鹰角/森空岛接口走 `/thirdparty/*` 同源代理（`src/api/hypergryph.ts`）；森空岛校验的设备 dId 由数美设备指纹服务签发（`src/api/device-fingerprint.ts`，走 `/thirdparty/fp` 代理，代理需剥离 Origin/Referer），随机生成的 dId 会被判 10001 设备信息无效。
 - 头像 `<img>` 统一加 `referrerpolicy="no-referrer"` 规避 CDN 防盗链。
 
 ## 常见问题排查

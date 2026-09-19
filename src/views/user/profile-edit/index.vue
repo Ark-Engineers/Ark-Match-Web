@@ -3,8 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { updateProfile, getAvatarOptions, resolveArkAvatarUrl } from '@/api/user'
-import type { AvatarOption } from '@/api/user'
+import { updateProfile, resolveArkAvatarUrl } from '@/api/user'
+import { getArknightsAvatarOptions, type AvatarOption } from '@/api/arknights-avatar'
 import UiCard from '@/components/UiCard.vue'
 import UiButton from '@/components/UiButton.vue'
 import UiSpinner from '@/components/UiSpinner.vue'
@@ -89,7 +89,7 @@ async function openAvatarPicker() {
   if (avatarOptions.value.length) return
   avatarLoading.value = true
   try {
-    avatarOptions.value = await getAvatarOptions()
+    avatarOptions.value = await getArknightsAvatarOptions()
   } catch (e: any) {
     ui.showToast(e.message || '加载头像失败', 'error')
   } finally {

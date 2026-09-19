@@ -28,15 +28,31 @@ export interface UserProfile {
   confirmedMatches: number
 }
 
-export interface AvatarOption {
-  id: string
-  name: string
-  rarity: number
-  avatarUrl: string
+export interface ArknightsBindingStatus {
+  bound: boolean
+  isMinor: boolean | null
+  isAdult: boolean | null
+  hgId: string | null
+  uid: string | null
+  nickName: string | null
+  channelName: string | null
+  boundAt: string | null
+}
+
+export interface ArknightsBindRequest {
+  basic: {
+    isMinor: boolean
+    hgId: string
+  }
+  accountBinding: {
+    uid: string
+    nickName: string
+    channelName: string
+  }
 }
 
 // 干员头像 CDN（规范项目约定）：后端给 charId，前端拼 CDN；无 charId 时回落后端 avatarUrl
-const ARK_AVATAR_CDN = 'https://web.hycdn.cn/arknights/game/assets/char/avatar'
+export const ARK_AVATAR_CDN = 'https://web.hycdn.cn/arknights/game/assets/char/avatar'
 
 export function resolveArkAvatarUrl(
   charId: string | null | undefined,
@@ -69,6 +85,14 @@ export async function getPublicProfile(userId: number): Promise<UserProfile> {
   return unwrap<UserProfile>({ url: `/user/profile/${userId}`, method: 'GET' })
 }
 
-export async function getAvatarOptions(): Promise<AvatarOption[]> {
-  return unwrap<AvatarOption[]>({ url: '/user/profile/avatar-options', method: 'GET' })
+export async function getArknightsBindingStatus(): Promise<ArknightsBindingStatus> {
+  return unwrap<ArknightsBindingStatus>({ url: '/user/arknights/status', method: 'GET' })
+}
+
+export async function bindArknights(data: ArknightsBindRequest): Promise<ArknightsBindingStatus> {
+  return unwrap<ArknightsBindingStatus>({ url: '/user/arknights/bind', method: 'POST', data })
+}
+
+export async function unbindArknights(): Promise<void> {
+  return unwrap<void>({ url: '/user/arknights/unbind', method: 'POST' })
 }

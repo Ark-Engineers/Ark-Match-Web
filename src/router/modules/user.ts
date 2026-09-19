@@ -13,6 +13,18 @@ export const userRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/user/ark-bind/callback',
+    name: 'user-ark-bind-callback',
+    component: () => import('@/views/user/ark-bind/callback/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/user/ark-bind',
+    name: 'user-ark-bind',
+    component: () => import('@/views/user/ark-bind/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/user/profile/:userId',
     name: 'user-profile-view',
     component: () => import('@/views/user/profile/index.vue'),
