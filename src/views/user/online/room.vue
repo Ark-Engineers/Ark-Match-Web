@@ -7,9 +7,11 @@ import { Spine } from 'pixi-spine'
 import { ElMessage } from 'element-plus'
 
 import { request } from '@/api'
+import { getRaceState, type RaceStateResponse } from '@/api/race'
 import { getPublicProfile, resolveArkAvatarUrl, type UserProfile } from '@/api/user'
 import { API_BASE_URL } from '@/config'
 import { useAuthStore } from '@/stores/auth'
+import RaceScene from './race/RaceScene.vue'
 
 type ApiResponse<T> = { code: number; message: string; data: T }
 
@@ -66,6 +68,13 @@ type SnapshotMsg = {
 
 type CtrlPongMsg = { type: 'pong'; ts: number; serverTs?: number }
 
+type RaceWsMsg =
+  | { type: 'race_update' }
+  | { type: 'race_pool_update'; roundId: number; totalPool: number }
+  | { type: 'race_start'; roundId: number; roundNo: number; seed: string; raceStartAt: number; durationMs: number }
+  | { type: 'race_result'; roundId: number; roundNo: number; ranking: number[]; totalPool: number; paidTotal: number }
+  | { type: 'race_my_result'; roundId: number; roundNo: number; payout: number; betTotal: number; wins: any[] }
+
 type WsMsg =
   | WelcomeMsg
   | SnapshotMsg
@@ -78,6 +87,7 @@ type WsMsg =
   | { type: 'host_fps'; fps: number }
   | { type: 'host_change'; hostClientId: string | null; hostFps: number }
   | CtrlPongMsg
+  | RaceWsMsg
 
 type RenderedPlayer = {
   state: PlayerState
@@ -103,6 +113,17 @@ const roomId = computed(() => String(route.query.room || 'lobby').trim() || 'lob
 const assetKey = computed(() => String(route.query.assetKey || '').trim())
 
 const wrapRef = ref<HTMLDivElement | null>(null)
+const raceSceneRef = ref<InstanceType<typeof RaceScene> | null>(null)
+const raceState = ref<RaceStateResponse | null>(null)
+const raceSceneVisible = ref(false)
+
+const racePhaseLabel = computed(() => {
+  const s = raceState.value?.round?.status
+  if (s === 'BETTING') return '竞猜中'
+  if (s === 'RACING') return '比赛中'
+  if (s === 'PODIUM') return '颁奖中'
+  return '等待中'
+})
 let app: PIXI.Application | null = null
 let worldLayer: PIXI.Container | null = null
 let guideGfx: PIXI.Graphics | null = null
@@ -829,6 +850,57 @@ function handleMsg(m: WsMsg): void {
     }
     return
   }
+  if (m.type === 'race_update') {
+    void refreshRaceState()
+    raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
+  if (m.type === 'race_pool_update') {
+    const r = raceState.value?.round
+    if (r && Number(m.roundId) === r.id) {
+      raceState.value = { ...raceState.value!, round: { ...r, totalPool: Number(m.totalPool || 0) } }
+    }
+    raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
+  if (m.type === 'race_start') {
+    const r = raceState.value?.round
+    if (r && Number(m.roundId) === r.id) {
+      raceState.value = {
+        ...raceState.value!,
+        round: { ...r, status: 'RACING', seed: String(m.seed || ''), raceStartAt: Number(m.raceStartAt || 0) }
+      }
+    }
+    raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
+  if (m.type === 'race_result') {
+    const r = raceState.value?.round
+    if (r && Number(m.roundId) === r.id) {
+      raceState.value = {
+        ...raceState.value!,
+        round: {
+          ...r,
+          status: 'PODIUM',
+          ranking: Array.isArray(m.ranking) ? m.ranking.map(Number) : null,
+          totalPool: Number(m.totalPool || 0),
+          paidTotal: Number(m.paidTotal || 0)
+        }
+      }
+    }
+    raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
+  if (m.type === 'race_my_result') {
+    const payout = Number(m.payout || 0)
+    if (payout > 0) {
+      ElMessage.success(`赛马竞猜结果：第 ${m.roundNo} 场获得 ${payout} 龙门币奖金`)
+    } else {
+      ElMessage.info(`赛马竞猜结果：第 ${m.roundNo} 场未中奖`)
+    }
+    raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
   if (!app) return
   if (m.type === 'welcome') {
     myClientId = m.clientId
@@ -871,6 +943,7 @@ function handleMsg(m: WsMsg): void {
         }
       }
     }
+    void refreshRaceState()
     return
   }
   if (m.type === 'snapshot') {
@@ -960,6 +1033,26 @@ function scheduleReconnect(): void {
     reconnectTimer = null
     void connect()
   }, wait)
+}
+
+async function refreshRaceState(): Promise<void> {
+  try {
+    const s = await getRaceState(roomId.value)
+    raceState.value = s
+    if (!s.exists && raceSceneVisible.value) {
+      raceSceneVisible.value = false
+      ElMessage.info('赛马模式已结束')
+    }
+  } catch {}
+}
+
+function getServerNow(): number {
+  return Date.now() + serverClockOffsetMs
+}
+
+function toggleRaceScene(): void {
+  if (!raceState.value?.exists) return
+  raceSceneVisible.value = !raceSceneVisible.value
 }
 
 async function connect(): Promise<void> {
@@ -1189,6 +1282,46 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-if="!raceSceneVisible && raceState?.exists" class="absolute left-6 top-6 z-10">
+      <button
+        class="rounded-xl bg-black/45 border border-amber-400/30 hover:border-amber-300/70 backdrop-blur-md px-4 py-3 text-gray-100 cursor-pointer text-left shadow-lg transition-colors"
+        @click="toggleRaceScene"
+      >
+        <div class="text-sm font-bold text-amber-300">赛马竞猜</div>
+        <div class="mt-0.5 text-xs text-gray-300 truncate max-w-[220px]">
+          {{ raceState.race?.name || '赛马竞猜' }}
+        </div>
+        <div class="mt-1 flex items-center gap-2 text-xs">
+          <span
+            class="px-1.5 py-0.5 rounded-full border"
+            :class="
+              racePhaseLabel === '竞猜中'
+                ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300'
+                : racePhaseLabel === '比赛中'
+                  ? 'bg-amber-500/15 border-amber-400/40 text-amber-300'
+                  : racePhaseLabel === '颁奖中'
+                    ? 'bg-sky-500/15 border-sky-400/40 text-sky-300'
+                    : 'bg-white/10 border-white/15 text-gray-300'
+            "
+          >
+            {{ racePhaseLabel }}
+          </span>
+          <span class="text-gray-400">奖池 {{ (raceState.round?.totalPool ?? 0).toLocaleString() }}</span>
+        </div>
+        <div class="mt-0.5 text-[10px] text-gray-500">点击进入赛马场景</div>
+      </button>
+    </div>
+
+    <div v-if="raceSceneVisible" class="absolute left-0 right-0 top-0 h-[55%] z-20">
+      <RaceScene
+        ref="raceSceneRef"
+        :room-id="roomId"
+        :initial="raceState"
+        :get-server-now="getServerNow"
+        @exit="raceSceneVisible = false"
+      />
+    </div>
+
     <div class="absolute right-6 top-6 z-10">
       <button
         class="mb-3 w-full px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
@@ -1225,6 +1358,10 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div class="absolute inset-0" ref="wrapRef"></div>
+    <div
+      class="absolute left-0 right-0 bottom-0"
+      :class="raceSceneVisible ? 'top-[55%]' : 'top-0'"
+      ref="wrapRef"
+    ></div>
   </div>
 </template>
