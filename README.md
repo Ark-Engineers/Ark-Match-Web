@@ -74,6 +74,7 @@ server {
 | `VITE_ASSET_BASE` | `/` | Vite 资源 `base`，可部署到子路径 |
 | `VITE_DROP_CONSOLE` | `false` | prod 是否去除 console |
 | `VITE_PROD_DOMAIN` | `www.chenmyserver.cn` | 生产域名 |
+| `VITE_LMD_SIGN_SECRET` | （dev 内置示例值） | 管理后台龙门币写操作 HMAC 签名密钥，必须与后端 `LMD_SIGN_SECRET` 一致 |
 
 修改 env 后需重启 dev / 重新构建才生效。
 
@@ -109,8 +110,9 @@ pnpm build            # type-check + 生产构建
 - **问卷**：后端驱动的多题型问卷（单选 / 判断 / `多选_X` / 填空）+ 父子题联动，未登录可先作答、登录后自动提交；含问卷刷新回显页。
 - **个人中心 / 编辑资料**：头像（干员 CDN）、主打干员、简介、生日、标签、QQ/微信/邮箱。
 - **匹配**：匹配状态、待确认匹配、匹配详情。
-- **通知 / 公告**、**封禁申诉**、**登录 / 注册**（独立页 + 弹窗）。
-- **管理后台**（仅管理员）：问卷管理、用户管理、公告、仪表盘等（基于 Element Plus）。
+- **通知 / 公告**（站内通知支持带龙门币的邮件，可一键领取）、**封禁申诉**、**登录 / 注册**（独立页 + 弹窗）。
+- **龙门币**：用户端钱包页 `/user/lmd`（余额 + 流水翻页）；个人资料页显示余额并可跳转流水。
+- **管理后台**（仅管理员）：问卷管理、用户管理、公告、龙门币管理（余额调整 / 发布龙门币邮件 / 流水与领取审计 / 账面校验）、仪表盘等（基于 Element Plus）。
 
 核心页面目录：`src/views/user/**`（每个页面一个文件夹）。
 
@@ -142,6 +144,8 @@ vite.config.ts / envDir=env
 - 头像列表：前端直连森空岛干员图鉴接口获取（`src/api/arknights-avatar.ts`，skland 开放跨域，无需后端代理）。
 - 官方账号绑定：鹰角/森空岛接口走 `/thirdparty/*` 同源代理（`src/api/hypergryph.ts`）；森空岛校验的设备 dId 由数美设备指纹服务签发（`src/api/device-fingerprint.ts`，走 `/thirdparty/fp` 代理，代理需剥离 Origin/Referer），随机生成的 dId 会被判 10001 设备信息无效。
 - 头像 `<img>` 统一加 `referrerpolicy="no-referrer"` 规避 CDN 防盗链。
+- 龙门币领取：带龙门币的通知在通知页显示“领取”按钮，先换取一次性票据（`requestClaimTicket`）再凭票据领取（`claimLmdMail`），每封仅可领取一次，过期/已领取由前端按接口返回状态展示。
+- 龙门币后台签名：管理后台龙门币写操作（余额调整 / 发布邮件）走 `src/api/admin/lmd.ts`，用 `crypto.subtle` 对请求体做 HMAC-SHA256 签名（时间戳窗口 + 随机数防重放），密钥来自 `VITE_LMD_SIGN_SECRET`，与后端 `LMD_SIGN_SECRET` 保持一致；字符串拼接前两侧必须同样 trim，否则签名校验失败。
 
 ## 常见问题排查
 

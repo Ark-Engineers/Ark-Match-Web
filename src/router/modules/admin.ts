@@ -26,6 +26,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, role: 'ADMIN' },
       },
       {
+        path: 'lmd',
+        name: 'admin-lmd',
+        component: () => import('@/views/admin/lmd/index.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
+      {
         path: 'spine',
         name: 'admin-spine',
         component: () => import('@/views/admin/spine/index.vue'),
@@ -35,6 +41,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         path: 'spine/:id/play',
         name: 'admin-spine-play',
         component: () => import('@/views/admin/spine/play.vue'),
+        meta: { requiresAuth: true, role: 'ADMIN' },
+      },
+      {
+        path: 'race',
+        name: 'admin-race',
+        component: () => import('@/views/admin/race/index.vue'),
         meta: { requiresAuth: true, role: 'ADMIN' },
       },
       {

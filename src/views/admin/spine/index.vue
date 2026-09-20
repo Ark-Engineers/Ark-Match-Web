@@ -14,10 +14,26 @@ type SpineAssetItem = {
   id: number
   assetKey: string
   name: string | null
+  type: number
   createdBy: number
   updatedBy: number
   createdAt: string
   updatedAt: string
+}
+
+const TYPE_OPTIONS = [
+  { value: 1, label: '人物', tagType: 'primary' },
+  { value: 2, label: '敌人', tagType: 'warning' },
+  { value: 3, label: 'BOSS', tagType: 'danger' },
+] as const
+
+function typeLabel(t: number): string {
+  return TYPE_OPTIONS.find((o) => o.value === t)?.label ?? String(t)
+}
+
+function typeTagType(t: number): 'primary' | 'warning' | 'danger' {
+  const o = TYPE_OPTIONS.find((o) => o.value === t)
+  return o ? o.tagType : 'primary'
 }
 
 type SpineFileItem = {
@@ -85,6 +101,7 @@ const importMode = ref<'files' | 'zip'>('files')
 
 const importForm = reactive({
   name: '',
+  type: 1,
   zip: null as File | null,
   atlas: null as File | null,
   skel: null as File | null,
@@ -94,6 +111,7 @@ const importForm = reactive({
 
 function resetImportForm(): void {
   importForm.name = ''
+  importForm.type = 1
   importForm.zip = null
   importForm.atlas = null
   importForm.skel = null
@@ -124,6 +142,7 @@ async function doImport(): Promise<void> {
   try {
     const form = new FormData()
     if (importForm.name.trim()) form.append('name', importForm.name.trim())
+    form.append('type', String(importForm.type))
     let url = '/admin/spine/import'
     if (importMode.value === 'zip') {
       if (!importForm.zip) {
@@ -214,6 +233,7 @@ const editing = ref(false)
 const editForm = reactive({
   id: 0,
   name: '',
+  type: 1,
   updateFiles: false,
   atlas: null as File | null,
   skel: null as File | null,
@@ -224,6 +244,7 @@ const editForm = reactive({
 function resetEditForm(): void {
   editForm.id = 0
   editForm.name = ''
+  editForm.type = 1
   editForm.updateFiles = false
   editForm.atlas = null
   editForm.skel = null
@@ -237,6 +258,7 @@ async function openEdit(): Promise<void> {
   resetEditForm()
   editForm.id = d.asset.id
   editForm.name = d.asset.name || ''
+  editForm.type = d.asset.type || 1
   editVisible.value = true
   await nextTick()
 }
@@ -247,6 +269,7 @@ async function doUpdate(): Promise<void> {
   try {
     const form = new FormData()
     if (editForm.name.trim()) form.append('name', editForm.name.trim())
+    form.append('type', String(editForm.type))
     if (editForm.updateFiles) {
       if (!editForm.atlas || !editForm.skel || editForm.pngs.length <= 0) {
         ElMessage.warning('更新文件需要同时提供 atlas、skel、png')
@@ -396,6 +419,11 @@ onBeforeUnmount(() => {
       <el-table :data="pageData.items" style="width: 100%">
         <el-table-column prop="assetKey" label="Key" min-width="180" />
         <el-table-column prop="name" label="名称" min-width="200" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            <el-tag :type="typeTagType(row.type)" size="small">{{ typeLabel(row.type) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="180" />
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
@@ -431,6 +459,12 @@ onBeforeUnmount(() => {
         <div class="form-row">
           <div class="form-label">名称</div>
           <el-input v-model="importForm.name" placeholder="可选" maxlength="128" show-word-limit />
+        </div>
+        <div class="form-row">
+          <div class="form-label">类型</div>
+          <el-radio-group v-model="importForm.type">
+            <el-radio-button v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.value">{{ o.label }}</el-radio-button>
+          </el-radio-group>
         </div>
         <template v-if="importMode === 'zip'">
           <div class="form-row">
@@ -476,6 +510,10 @@ onBeforeUnmount(() => {
           <div class="detail-meta">
             <div class="meta-item"><span class="meta-k">Key</span><span class="meta-v">{{ currentDetail.asset.assetKey }}</span></div>
             <div class="meta-item"><span class="meta-k">名称</span><span class="meta-v">{{ currentDetail.asset.name || '—' }}</span></div>
+            <div class="meta-item">
+              <span class="meta-k">类型</span>
+              <el-tag :type="typeTagType(currentDetail.asset.type)" size="small">{{ typeLabel(currentDetail.asset.type) }}</el-tag>
+            </div>
             <div class="meta-item"><span class="meta-k">更新时间</span><span class="meta-v">{{ currentDetail.asset.updatedAt }}</span></div>
           </div>
 
@@ -524,6 +562,12 @@ onBeforeUnmount(() => {
         <div class="form-row">
           <div class="form-label">名称</div>
           <el-input v-model="editForm.name" placeholder="可选" maxlength="128" show-word-limit />
+        </div>
+        <div class="form-row">
+          <div class="form-label">类型</div>
+          <el-radio-group v-model="editForm.type">
+            <el-radio-button v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.value">{{ o.label }}</el-radio-button>
+          </el-radio-group>
         </div>
         <div class="form-row">
           <div class="form-label">更新文件</div>

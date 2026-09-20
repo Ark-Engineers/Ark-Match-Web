@@ -10,10 +10,14 @@ export interface InboxItem {
   level: string
   linkUrl: string | null
   payloadJson: string | null
+  lmdAmount: number
+  lmdClaimExpireAt: string | null
   expireAt: string | null
   notificationCreatedAt: string | null
   read: boolean
   readAt: string | null
+  claimed: boolean
+  claimedAt: string | null
   deliveredAt: string | null
 }
 

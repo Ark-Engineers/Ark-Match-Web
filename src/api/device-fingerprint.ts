@@ -137,13 +137,13 @@ function rsaEncryptUid(uid: string): string {
   return out
 }
 
-async function gzipBytes(data: Uint8Array): Promise<Uint8Array> {
+async function gzipBytes(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
   const stream = new Blob([data]).stream().pipeThrough(new CompressionStream('gzip'))
   const buf = await new Response(stream).arrayBuffer()
   return new Uint8Array(buf)
 }
 
-async function aesCbcEncryptHex(data: Uint8Array, keyAscii: string): Promise<string> {
+async function aesCbcEncryptHex(data: Uint8Array<ArrayBuffer>, keyAscii: string): Promise<string> {
   const keyBytes = new TextEncoder().encode(keyAscii)
   const ivBytes = new TextEncoder().encode('0102030405060708')
   const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-CBC' }, false, ['encrypt'])
@@ -153,7 +153,7 @@ async function aesCbcEncryptHex(data: Uint8Array, keyAscii: string): Promise<str
     .join('')
 }
 
-function padAesPlaintext(b64: string): Uint8Array {
+function padAesPlaintext(b64: string): Uint8Array<ArrayBuffer> {
   const padLen = 16 - (b64.length % 16)
   const aligned = padLen < 16 ? b64 + '\x00'.repeat(padLen) : b64
   const withPkcs7 = aligned + '\x10'.repeat(16)

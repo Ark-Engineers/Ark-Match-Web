@@ -74,6 +74,12 @@ export const userRoutes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/user/lmd',
+    name: 'user-lmd',
+    component: () => import('@/views/user/lmd/index.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/notices',
     name: 'notices',
     component: () => import('@/views/user/notices/index.vue'),

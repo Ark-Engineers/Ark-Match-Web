@@ -30,6 +30,7 @@ type ProfileResponse = {
   qq: string | null
   wechat: string | null
   email: string | null
+  lmdBalance: number
 }
 
 type UpdateProfileRequest = {
@@ -483,6 +484,13 @@ onBeforeUnmount(() => {
           <div style="display: flex; gap: 10px; align-items: center; width: 100%">
             <el-input v-model="security.nickname" :disabled="!canEdit" maxlength="64" show-word-limit />
             <el-button v-if="canEdit" type="primary" :loading="security.nicknameSaving" @click="saveNickname">修改</el-button>
+          </div>
+        </el-form-item>
+
+        <el-form-item label="龙门币">
+          <div style="display: flex; gap: 10px; align-items: center; width: 100%">
+            <el-input :model-value="String(profile?.lmdBalance ?? 0)" disabled style="flex: 1" />
+            <el-button v-if="isOwner" @click="router.push('/user/lmd')">查看流水</el-button>
           </div>
         </el-form-item>
 
