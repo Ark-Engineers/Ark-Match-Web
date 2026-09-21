@@ -15,7 +15,10 @@ import {
   type RaceVerifyResult
 } from '@/api/race'
 import { listOnlineRooms, type OnlineRoomCard } from '@/api/online'
+import { useAuthStore } from '@/stores/auth'
+import RaceDeveloperConsole from './RaceDeveloperConsole.vue'
 
+const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<RaceAdminRow[]>([])
 const rooms = ref<OnlineRoomCard[]>([])
@@ -257,10 +260,13 @@ const typeLabel = (t: number | null | undefined): string => (Number(t) === 3 ? '
       <el-table-column label="投注截止" width="170">
         <template #default="{ row }">{{ fmtTime(row.round?.betEndAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openDetail(row)">详情</el-button>
-          <el-button size="small" type="danger" @click="doClose(row)">关闭</el-button>
+          <div style="display: flex; align-items: center; gap: 8px">
+            <el-button size="small" @click="openDetail(row)">详情</el-button>
+            <RaceDeveloperConsole v-if="auth.isSuperAdmin" :key="row.race.id" :race-id="row.race.id" @changed="loadRows" />
+            <el-button size="small" type="danger" @click="doClose(row)">关闭</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -359,7 +365,7 @@ const typeLabel = (t: number | null | undefined): string => (Number(t) === 3 ? '
             <span>场次：{{ sessionLabel(detail.race.sessionType) }}</span>
             <span>竞猜周期：{{ detail.race.betDurationSeconds }} 秒</span>
           </div>
-          <div style="margin-bottom: 4px; font-size: 13px; font-weight: 600">参赛对象</div>
+          <div style="margin-bottom: 4px; font-size: 13px; font-weight: 600">当前参赛对象</div>
           <el-table :data="detail.participants" border size="small" style="margin-bottom: 12px">
             <el-table-column prop="sortNo" label="道次" width="70" />
             <el-table-column prop="name" label="名称" min-width="140">
@@ -370,8 +376,24 @@ const typeLabel = (t: number | null | undefined): string => (Number(t) === 3 ? '
               <template #default="{ row }">{{ typeLabel(row.type) }}</template>
             </el-table-column>
           </el-table>
-          <div style="margin-bottom: 4px; font-size: 13px; font-weight: 600">轮次</div>
-          <el-table :data="detail.rounds" border size="small">
+          <div style="margin-bottom: 4px; font-size: 13px; font-weight: 600">轮次（展开查看本轮名单与名次）</div>
+          <el-table :data="detail.rounds" border size="small" row-key="id">
+            <el-table-column type="expand">
+              <template #default="{ row: raceRound }">
+                <el-table :data="detail.roundParticipants[raceRound.id]" size="small" style="padding: 8px 24px">
+                  <el-table-column prop="sortNo" label="道次" width="70" />
+                  <el-table-column label="参赛对象" min-width="160">
+                    <template #default="{ row }">{{ row.name || row.assetKey }}</template>
+                  </el-table-column>
+                  <el-table-column prop="assetKey" label="资源Key" min-width="140" />
+                  <el-table-column label="最终名次" width="100">
+                    <template #default="{ row }">
+                      {{ raceRound.ranking?.includes(row.id) ? raceRound.ranking.indexOf(row.id) + 1 : '-' }}
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </template>
+            </el-table-column>
             <el-table-column prop="roundNo" label="轮次" width="70" />
             <el-table-column label="阶段" width="90">
               <template #default="{ row }">{{ phaseLabel(row.status) }}</template>

@@ -104,6 +104,23 @@ export async function adjustLmd(
   return res.data
 }
 
+export async function setLmdBalance(
+  userId: number,
+  balance: number,
+  expectedBalance: number,
+  description: string,
+): Promise<{ userId: number; amount: number; balanceAfter: number }> {
+  const desc = description.trim()
+  const signed = await buildSigned('lmd.set-balance', [userId, balance, expectedBalance, desc])
+  const res = await request<ApiResponse<{ userId: number; amount: number; balanceAfter: number }>>({
+    url: '/admin/lmd/set-balance',
+    method: 'POST',
+    data: { userId, balance, expectedBalance, description: desc, ...signed },
+  })
+  if (res.code !== 0) throw new Error(res.message || '设置余额失败')
+  return res.data
+}
+
 /** 发布带龙门币奖励的系统通知邮件（claimExpireAt 为空串表示永久有效），需要 HMAC 签名 */
 export async function publishLmdMail(input: {
   title: string

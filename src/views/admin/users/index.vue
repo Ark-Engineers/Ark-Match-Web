@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { http, request } from '@/api'
+import { adjustLmd, getLmdTransactionsAdmin, setLmdBalance, type AdminTxItem } from '@/api/admin/lmd'
 import { useAuthStore } from '@/stores/auth'
 
 type ApiResponse<T> = { code: number; message: string; data: T }
@@ -26,6 +27,7 @@ type UserItem = {
   updatedAt: string
   deleted: number
   deletedAt: string | null
+  lmdBalance: number
 }
 
 type UserManageLog = {
@@ -124,6 +126,150 @@ const roleReason = ref('')
 
 const bansPage = ref<PageResponse<BanRecord>>({ total: 0, page: 1, size: 20, items: [] })
 const bansQuery = reactive({ status: '', page: 1, size: 20 })
+
+const lmdDrawerVisible = ref(false)
+const lmdUser = ref<UserItem | null>(null)
+const lmdLoading = ref(false)
+const lmdReady = ref(false)
+const lmdSubmitting = ref(false)
+const lmdError = ref('')
+const lmdForm = reactive({ mode: 'add' as 'add' | 'deduct' | 'set', amount: undefined as number | undefined, description: '' })
+const lmdQuery = reactive({ type: '', page: 1, size: 20 })
+const lmdPage = ref<PageResponse<AdminTxItem>>({ total: 0, page: 1, size: 20, items: [] })
+let lmdRequestVersion = 0
+const lmdTypes = [
+  { value: 'ADMIN_ADJUST', label: '管理员调整' },
+  { value: 'MAIL_CLAIM', label: '邮件领取' },
+  { value: 'RACE_BET', label: '赛马下注' },
+  { value: 'RACE_PAYOUT', label: '赛马奖金' },
+  { value: 'RACE_REFUND', label: '赛马退款' },
+]
+const canAdjustLmd = computed(() => !!lmdUser.value && lmdUser.value.deleted !== 1 && canOperateUser(lmdUser.value))
+const lmdDelta = computed(() => {
+  const amount = lmdForm.amount
+  if (amount == null || !Number.isSafeInteger(amount) || !lmdUser.value) return null
+  if (lmdForm.mode === 'set') return amount - lmdUser.value.lmdBalance
+  return lmdForm.mode === 'deduct' ? -amount : amount
+})
+
+function formatLmd(amount: number): string {
+  return Number.isFinite(amount) ? amount.toLocaleString('zh-CN') : '未加载'
+}
+
+function formatLmdType(type: string): string {
+  return lmdTypes.find((item) => item.value === type)?.label ?? type
+}
+
+async function openLmd(user: UserItem): Promise<void> {
+  lmdUser.value = { ...user }
+  lmdQuery.type = ''
+  lmdQuery.page = 1
+  lmdQuery.size = 20
+  lmdPage.value = { total: 0, page: 1, size: 20, items: [] }
+  lmdForm.mode = 'add'
+  lmdForm.amount = undefined
+  lmdForm.description = ''
+  lmdDrawerVisible.value = true
+  await loadLmdData()
+}
+
+async function loadLmdData(): Promise<void> {
+  const userId = lmdUser.value?.id
+  if (!userId || !lmdDrawerVisible.value) return
+  const version = ++lmdRequestVersion
+  lmdLoading.value = true
+  lmdReady.value = false
+  lmdError.value = ''
+  lmdPage.value.items = []
+  try {
+    const [detail, transactions] = await Promise.all([
+      request<ApiResponse<UserItem>>({ url: `/admin/user-manage/users/${userId}`, method: 'GET' }),
+      getLmdTransactionsAdmin({ userId, ...lmdQuery }),
+    ])
+    if (version !== lmdRequestVersion || !lmdDrawerVisible.value) return
+    if (detail.code !== 0) throw new Error(detail.message || '余额查询失败')
+    lmdUser.value = detail.data
+    lmdPage.value = transactions
+    const row = usersPage.value.items.find((item) => item.id === userId)
+    if (row) row.lmdBalance = detail.data.lmdBalance
+    if (!Number.isSafeInteger(detail.data.lmdBalance) || detail.data.lmdBalance < 0) {
+      throw new Error('余额数据缺失或超出安全整数范围，不能调整；请确认后端已更新并重启')
+    }
+    lmdReady.value = true
+  } catch (e) {
+    if (version === lmdRequestVersion && lmdDrawerVisible.value) lmdError.value = resolveErrorMessage(e)
+  } finally {
+    if (version === lmdRequestVersion) lmdLoading.value = false
+  }
+}
+
+async function applyLmdQuery(): Promise<void> {
+  lmdQuery.page = 1
+  await loadLmdData()
+}
+
+async function submitLmd(): Promise<void> {
+  const user = lmdUser.value
+  if (!user || !canAdjustLmd.value || !lmdReady.value || lmdLoading.value || lmdSubmitting.value) return
+  const amount = lmdForm.amount
+  const delta = lmdDelta.value
+  const mode = lmdForm.mode
+  const description = lmdForm.description.trim()
+  if (amount == null || !Number.isSafeInteger(amount) || amount < (mode === 'set' ? 0 : 1)) {
+    ElMessage.warning(mode === 'set' ? '请输入不小于 0 的整数余额' : '请输入大于 0 的整数金额')
+    return
+  }
+  if (delta == null || !Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > 10_000_000) {
+    ElMessage.warning('单次变动金额须为非零整数，且不超过 10,000,000 龙门币')
+    return
+  }
+  if (!Number.isSafeInteger(user.lmdBalance) || !Number.isSafeInteger(user.lmdBalance + delta)) {
+    ElMessage.warning('余额超出页面可安全处理的整数范围')
+    return
+  }
+  if (user.lmdBalance + delta < 0) {
+    ElMessage.warning('扣除金额不能超过当前余额')
+    return
+  }
+  if (!description || description.length > 255) {
+    ElMessage.warning('请填写调整原因，不超过 255 字')
+    return
+  }
+  lmdSubmitting.value = true
+  try {
+    const action = mode === 'set' ? `设置为 ${formatLmd(amount)}` : `${mode === 'add' ? '增加' : '扣除'} ${formatLmd(amount)}`
+    try {
+      await ElMessageBox.confirm(
+        `确认将用户 ${user.nickname || user.account}（ID ${user.id}）的龙门币${action}？本次变动 ${delta > 0 ? '+' : ''}${formatLmd(delta)}，将记录资金流水。`,
+        '龙门币调整确认',
+        { confirmButtonText: '确认调整', cancelButtonText: '取消', type: 'warning', closeOnClickModal: false },
+      )
+    } catch {
+      return
+    }
+    lmdError.value = ''
+    try {
+      const result = mode === 'set'
+        ? await setLmdBalance(user.id, amount, user.lmdBalance, description)
+        : await adjustLmd(user.id, delta, description)
+      user.lmdBalance = result.balanceAfter
+      const row = usersPage.value.items.find((item) => item.id === user.id)
+      if (row) row.lmdBalance = result.balanceAfter
+      lmdForm.amount = undefined
+      lmdForm.description = ''
+      lmdQuery.page = 1
+      lmdQuery.type = ''
+      ElMessage.success(`调整成功，变动后余额 ${formatLmd(result.balanceAfter)}`)
+      await loadLmdData()
+    } catch (e) {
+      const message = resolveErrorMessage(e)
+      await loadLmdData()
+      lmdError.value = `${message}；请核对最新余额和流水后再操作`
+    }
+  } finally {
+    lmdSubmitting.value = false
+  }
+}
 
 function resolveErrorMessage(err: unknown): string {
   const anyErr = err as any
@@ -839,6 +985,11 @@ onBeforeUnmount(() => {
               <el-table-column prop="id" label="ID" width="90" />
               <el-table-column prop="nickname" label="昵称" min-width="140" show-overflow-tooltip />
               <el-table-column prop="account" label="账号" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="lmdBalance" label="龙门币" min-width="150" align="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openLmd(row)">{{ formatLmd(row.lmdBalance) }}</el-button>
+                </template>
+              </el-table-column>
               <el-table-column v-if="!isMobile" prop="email" label="邮箱" min-width="200" show-overflow-tooltip />
               <el-table-column prop="role" label="角色" width="120">
                 <template #default="{ row }">
@@ -895,6 +1046,7 @@ onBeforeUnmount(() => {
                       <el-button size="small" type="primary" plain>更多</el-button>
                       <template #dropdown>
                         <el-dropdown-menu>
+                          <el-dropdown-item @click="openLmd(row)">龙门币管理 / 流水</el-dropdown-item>
                           <el-dropdown-item v-if="isNarrow" @click="openResetPwd(row)" :disabled="!canOperateUser(row)">
                             重置密码
                           </el-dropdown-item>
@@ -1072,6 +1224,108 @@ onBeforeUnmount(() => {
         </el-card>
       </el-tab-pane>
     </el-tabs>
+
+    <el-drawer
+      v-model="lmdDrawerVisible"
+      title="用户龙门币管理 / 流水"
+      :size="isMobile ? '100%' : 'min(100%, 1000px)'"
+      :close-on-click-modal="false"
+      :close-on-press-escape="!lmdSubmitting"
+      :show-close="!lmdSubmitting"
+    >
+      <template v-if="lmdUser">
+        <el-alert v-if="lmdError" :title="lmdError" type="error" show-icon :closable="false" style="margin-bottom: 16px" />
+        <el-card shadow="never" class="admin-card" style="margin-bottom: 16px">
+          <div class="admin-pager" style="margin-top: 0">
+            <div>
+              <div>{{ lmdUser.nickname || lmdUser.account }}（ID {{ lmdUser.id }} / {{ lmdUser.account }}）</div>
+              <el-statistic v-if="Number.isFinite(lmdUser.lmdBalance)" title="当前龙门币余额" :value="lmdUser.lmdBalance" style="margin-top: 12px" />
+              <div v-if="!lmdReady" style="margin-top: 8px; color: var(--el-text-color-secondary)">余额待刷新确认</div>
+            </div>
+            <el-button :loading="lmdLoading" :disabled="lmdSubmitting" @click="loadLmdData">刷新余额与流水</el-button>
+          </div>
+          <el-divider />
+          <el-form
+            v-if="canAdjustLmd"
+            label-width="90px"
+            :disabled="lmdSubmitting || lmdLoading || !lmdReady"
+            @submit.prevent="submitLmd"
+          >
+            <el-form-item label="调整方式">
+              <el-radio-group v-model="lmdForm.mode" @change="lmdForm.amount = undefined">
+                <el-radio-button value="add">增加</el-radio-button>
+                <el-radio-button value="deduct">扣除</el-radio-button>
+                <el-radio-button value="set">设置余额</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item :label="lmdForm.mode === 'set' ? '目标余额' : '变动金额'" required>
+              <el-input-number
+                v-model="lmdForm.amount"
+                :min="lmdForm.mode === 'set' ? 0 : 1"
+                :max="lmdForm.mode === 'set' ? Number.MAX_SAFE_INTEGER : 10_000_000"
+                :precision="0"
+                :step="100"
+                controls-position="right"
+                placeholder="整数龙门币"
+                style="width: 100%; max-width: 320px"
+              />
+            </el-form-item>
+            <el-form-item label="调整原因" required>
+              <el-input v-model="lmdForm.description" type="textarea" :rows="2" maxlength="255" show-word-limit placeholder="填写原因，将记录在该用户的龙门币流水中" />
+            </el-form-item>
+            <el-form-item>
+              <div style="width: 100%; color: var(--el-text-color-secondary); margin-bottom: 8px">
+                仅支持整数，单次增减不超过 10,000,000；设置余额时若余额发生变化将拒绝操作，请重新确认。
+                <template v-if="lmdDelta !== null">本次预计变动：{{ lmdDelta > 0 ? '+' : '' }}{{ formatLmd(lmdDelta) }}。</template>
+              </div>
+              <el-button type="primary" native-type="submit" :loading="lmdSubmitting">确认调整</el-button>
+            </el-form-item>
+          </el-form>
+          <el-alert v-else title="该账号仅可查看余额和流水，不允许调整余额。" type="info" :closable="false" show-icon />
+        </el-card>
+
+        <el-form :inline="!isMobile" :disabled="lmdLoading || lmdSubmitting" @submit.prevent="applyLmdQuery">
+          <el-form-item label="流水类型">
+            <el-select v-model="lmdQuery.type" clearable placeholder="全部类型" style="width: 190px" @change="applyLmdQuery">
+              <el-option v-for="item in lmdTypes" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <el-table :data="lmdPage.items" border height="380" table-layout="fixed" v-loading="lmdLoading" empty-text="暂无龙门币流水">
+          <el-table-column prop="id" label="流水ID" width="100" />
+          <el-table-column prop="createdAt" label="时间" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="type" label="类型" width="130">
+            <template #default="{ row }">{{ formatLmdType(row.type) }}</template>
+          </el-table-column>
+          <el-table-column prop="amount" label="变动金额" min-width="130" align="right">
+            <template #default="{ row }">
+              <el-text :type="row.amount > 0 ? 'success' : 'danger'">{{ row.amount > 0 ? '+' : '' }}{{ formatLmd(row.amount) }}</el-text>
+            </template>
+          </el-table-column>
+          <el-table-column prop="balanceAfter" label="变动后余额" min-width="140" align="right">
+            <template #default="{ row }">{{ formatLmd(row.balanceAfter) }}</template>
+          </el-table-column>
+          <el-table-column prop="description" label="说明 / 原因" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="createdBy" label="操作人ID" width="110" />
+          <el-table-column prop="refType" label="关联类型" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="refId" label="关联ID" width="100" />
+          <el-table-column prop="traceId" label="溯源ID" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="requestIp" label="来源IP" min-width="140" show-overflow-tooltip />
+        </el-table>
+        <el-pagination
+          v-model:current-page="lmdQuery.page"
+          v-model:page-size="lmdQuery.size"
+          :total="lmdPage.total"
+          :page-sizes="[20, 50, 100]"
+          :layout="isMobile ? 'prev, pager, next' : 'total, sizes, prev, pager, next'"
+          :pager-count="5"
+          :disabled="lmdLoading || lmdSubmitting"
+          style="margin-top: 16px"
+          @size-change="applyLmdQuery"
+          @current-change="loadLmdData"
+        />
+      </template>
+    </el-drawer>
 
     <el-dialog v-model="editDialogVisible" title="修改用户信息" :width="isMobile ? '94%' : '520px'" :close-on-click-modal="false">
       <el-form label-width="80px">

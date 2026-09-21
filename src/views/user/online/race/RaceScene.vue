@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import 'pixi-spine'
 import * as PIXI from 'pixi.js'
 import { Spine } from 'pixi-spine'
@@ -14,7 +14,11 @@ import {
 } from '@/api/race'
 import { getLmdBalance } from '@/api/lmd'
 import { API_BASE_URL } from '@/config'
+import { useAuthStore } from '@/stores/auth'
 import { TICK_MS, TOTAL_TICKS, TRACK_LENGTH, buildProfiles } from '@/utils/raceSim'
+import RaceDeveloperConsole from '@/views/admin/race/RaceDeveloperConsole.vue'
+
+const auth = useAuthStore()
 
 const props = defineProps<{
   roomId: string
@@ -52,6 +56,7 @@ type RacerSprite = {
 let racers = new Map<number, RacerSprite>()
 let podiumSprites = new Map<number, RacerSprite>()
 let podiumGfx: PIXI.Graphics | null = null
+const racerAnimations = new WeakMap<Spine, string>()
 
 const st = ref<RaceStateResponse>(
   props.initial ?? {
@@ -63,6 +68,7 @@ const st = ref<RaceStateResponse>(
     myTotal: 0,
     minTotalBet: 100,
     maxTotalBet: 3000,
+    horsePools: {},
     serverTs: Date.now()
   }
 )
@@ -76,12 +82,20 @@ const myResult = ref<{
   roundNo: number
   payout: number
   betTotal: number
-  wins: Array<{ participantId: number; participantName: string; rankNo: number; payout: number }>
+  wins: Array<{ assetId: number; participantName: string; rankNo: number; payout: number }>
+  refunded: boolean
 } | null>(null)
 
 let profiles: number[][] | null = null
+let profileSeed: string | null = null
 let raceStartAtMs = 0
+let stateRequest = 0
+let disposed = false
+let tickRaceLogged = false
 let clockTimer: number | null = null
+
+// 参赛者动画配置缓存：pid -> { idleAnim, moveAnim, displayScale }
+const participantAnimConfig = new Map<number, { idleAnim: string; moveAnim: string; displayScale: number }>()
 
 const round = computed(() => st.value.round)
 const status = computed(() => round.value?.status ?? '')
@@ -89,14 +103,37 @@ const pool = computed(() => round.value?.totalPool ?? 0)
 const myTotal = computed(() => st.value.myTotal)
 const myBetByPid = computed(() => {
   const m = new Map<number, number>()
-  for (const b of st.value.myBets) m.set(b.participantId, (m.get(b.participantId) ?? 0) + b.amount)
+  for (const b of st.value.myBets) m.set(b.assetId, (m.get(b.assetId) ?? 0) + b.amount)
   return m
+})
+
+// 位置彩池：前三名均中奖，赔率 = (奖池/3) / 该对象彩池；无人押注显示 '—'
+function horsePoolFor(pid: number): number {
+  const hp = st.value.horsePools
+  return hp ? Number(hp[String(pid)] ?? 0) : 0
+}
+
+function oddsFor(pid: number): number | null {
+  const hp = horsePoolFor(pid)
+  if (hp <= 0 || pool.value <= 0) return null
+  return pool.value / 3 / hp
+}
+
+function fmtOdds(odds: number | null): string {
+  return odds === null ? '—' : odds.toFixed(2)
+}
+
+const refundNotice = computed(() => {
+  const r = round.value
+  return (
+    !!r && r.status === 'PODIUM' && (r.betCount ?? 0) > 0 && (r.totalPool ?? 0) > 0 && (r.paidTotal ?? 0) === 0
+  )
 })
 
 const bettingOpen = computed(() => {
   const r = round.value
-  if (!r || r.status !== 'BETTING') return false
-  return nowMs.value < (r.betEndAt ?? 0)
+  if (!r || r.status !== 'BETTING' || r.developerControlled) return false
+  return nowMs.value >= r.betStartAt && nowMs.value < r.betEndAt
 })
 
 const countdownText = computed(() => {
@@ -104,11 +141,14 @@ const countdownText = computed(() => {
   if (!r) return '等待开场'
   const s = r.status
   if (s === 'BETTING') {
+    if (r.developerControlled) return '指定排名演示场 · 禁止下注 · 等待开赛'
+    if (nowMs.value < r.betStartAt) return `距竞猜开始 ${fmtCountdown(r.betStartAt - nowMs.value)}`
     const left = (r.betEndAt ?? 0) - nowMs.value
     if (left <= 0) return '投注通道已关闭，即将开赛…'
     return `距投注截止 ${fmtCountdown(left)}`
   }
   if (s === 'RACING') {
+    if (nowMs.value < r.raceStartAt) return `准备开赛… ${fmtCountdown(r.raceStartAt - nowMs.value)}`
     const left = (r.raceStartAt ?? 0) + 60_000 - nowMs.value
     return `比赛中… 距结算 ${fmtCountdown(Math.max(0, left))}`
   }
@@ -162,13 +202,32 @@ function clamp(v: number, min: number, max: number): number {
 // ---------- 状态 ----------
 
 async function refreshState(): Promise<void> {
+  const request = ++stateRequest
   try {
     const s = await getRaceState(props.roomId)
+    if (disposed || request !== stateRequest) return
+    if (s.round?.id !== round.value?.id) {
+      profiles = null
+      profileSeed = null
+      tickRaceLogged = false
+      myResult.value = null
+      for (const key of Object.keys(amounts)) delete amounts[Number(key)]
+      for (const rs of podiumSprites.values()) {
+        rs.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+        rs.label.destroy()
+      }
+      podiumSprites.clear()
+    }
     st.value = s
     if (!s.exists) {
       ElMessage.info('赛马模式已结束')
       emit('exit')
       return
+    }
+    try {
+      await ensureRacers()
+    } catch (e) {
+      console.warn('加载参赛者资源失败:', e)
     }
     applyRoundState()
   } catch {}
@@ -182,13 +241,20 @@ function applyRoundState(): void {
     hideAllRacers()
     return
   }
-  if (r.status === 'RACING' && r.seed) {
-    if (!profiles) {
-      profiles = buildProfiles(r.seed)
-      raceStartAtMs = r.raceStartAt ?? 0
+  if (podiumGfx) podiumGfx.visible = r.status === 'PODIUM'
+  if (r.status !== 'PODIUM') {
+    for (const rs of podiumSprites.values()) {
+      rs.spine.visible = false
+      rs.label.visible = false
     }
+  }
+  if (r.status === 'RACING' && r.seed) {
+    if (!profiles || profileSeed !== r.seed) profiles = buildProfiles(r.seed)
+    profileSeed = r.seed
+    raceStartAtMs = r.raceStartAt
   } else if (r.status === 'BETTING') {
     profiles = null
+    profileSeed = null
     raceStartAtMs = 0
     positionRacersAtStart()
   } else if (r.status === 'PODIUM') {
@@ -206,39 +272,19 @@ function handleRaceMsg(m: any): void {
   if (type === 'race_pool_update') {
     const r = round.value
     if (r && Number(m.roundId) === r.id) {
-      st.value = { ...st.value, round: { ...r, totalPool: Number(m.totalPool || 0) } }
+      const hp = m.horsePools && typeof m.horsePools === 'object' ? m.horsePools : {}
+      st.value = { ...st.value, round: { ...r, totalPool: Number(m.totalPool || 0) }, horsePools: { ...hp } }
     }
     return
   }
-  if (type === 'race_start') {
-    const r = round.value
-    if (r && Number(m.roundId) === r.id) {
-      r.status = 'RACING'
-      r.seed = String(m.seed || '')
-      r.raceStartAt = Number(m.raceStartAt || 0)
-    }
-    if (r?.seed) {
-      profiles = buildProfiles(String(m.seed || ''))
-      raceStartAtMs = Number(m.raceStartAt || 0)
-    }
-    return
-  }
-  if (type === 'race_result') {
-    const r = round.value
-    if (r && Number(m.roundId) === r.id) {
-      r.status = 'PODIUM'
-      r.ranking = Array.isArray(m.ranking) ? m.ranking.map(Number) : null
-      r.totalPool = Number(m.totalPool || 0)
-      r.paidTotal = Number(m.paidTotal || 0)
-    }
-    profiles = null
-    layoutPodium()
+  if (type === 'race_start' || type === 'race_result') {
+    void refreshState()
     return
   }
   if (type === 'race_my_result') {
     const wins = Array.isArray(m.wins)
       ? m.wins.map((w: any) => ({
-          participantId: Number(w.participantId || 0),
+          assetId: Number(w.assetId || 0),
           participantName: String(w.participantName || ''),
           rankNo: Number(w.rankNo || 0),
           payout: Number(w.payout || 0)
@@ -249,9 +295,12 @@ function handleRaceMsg(m: any): void {
       roundNo: Number(m.roundNo || 0),
       payout: Number(m.payout || 0),
       betTotal: Number(m.betTotal || 0),
-      wins
+      wins,
+      refunded: Boolean(m.refunded)
     }
-    if (myResult.value.payout > 0) {
+    if (myResult.value.refunded) {
+      ElMessage.info('前三名无人押中，本场奖池已全额退款')
+    } else if (myResult.value.payout > 0) {
       ElMessage.success(`恭喜！本场赛马竞猜获得 ${myResult.value.payout} 龙门币`)
     } else {
       ElMessage.info('本场赛马竞猜未中奖，再接再厉！')
@@ -304,7 +353,7 @@ async function bet(pid: number): Promise<void> {
   if (bettingPid.value !== null) return
   bettingPid.value = pid
   try {
-    const res = await placeRaceBet({ roomId: props.roomId, participantId: pid, amount: amt })
+    const res = await placeRaceBet({ roomId: props.roomId, assetId: pid, amount: amt })
     const r = round.value
     if (r) {
       r.totalPool = res.totalPool
@@ -326,22 +375,40 @@ async function bet(pid: number): Promise<void> {
 
 function mergeBets(bets: RaceMyBetInfo[], pid: number, amt: number): RaceMyBetInfo[] {
   const out = bets.map((b) => ({ ...b }))
-  const hit = out.find((b) => b.participantId === pid)
+  const hit = out.find((b) => b.assetId === pid)
   if (hit) hit.amount += amt
-  else out.push({ participantId: pid, amount: amt })
+  else out.push({ assetId: pid, amount: amt })
   return out
 }
 
 // ---------- Pixi ----------
 
-function pickDefaultAnimation(list: string[]): string {
-  const l = list.map((x) => String(x || '')).filter(Boolean)
-  const lower = l.map((x) => x.toLowerCase())
-  for (const c of ['run', 'move', 'walk', 'idle', 'relax', 'stand', 'wait', 'default']) {
-    const idx = lower.findIndex((x) => x === c || x.includes(c))
-    if (idx >= 0) return l[idx] || ''
+function setRacerAnimation(spine: Spine, racing: boolean, pid?: number): void {
+  const names = spine.spineData.animations.map(a => a.name).filter(Boolean) as string[]
+  const usable = (name: string | undefined): name is string => name != null && names.includes(name)
+
+  // 优先使用 spine_asset 配置的动画名
+  let idleAnim: string | undefined
+  let moveAnim: string | undefined
+  if (pid != null) {
+    const cfg = participantAnimConfig.get(pid)
+    idleAnim = cfg?.idleAnim || undefined
+    moveAnim = cfg?.moveAnim || undefined
   }
-  return l[0] || ''
+
+  // 配置缺失或与 skel 实际动画不符时按名字特征匹配（支持 Idle_A、Move_Loop 等后缀）
+  if (!usable(idleAnim)) idleAnim = names.find(n => /^(idle|standby|wait|stay)(_[a-z0-9]*)?$/i.test(n))
+  if (!usable(moveAnim)) moveAnim = names.find(n => /^(move|walk|run|dash|charge)(_loop)?$/i.test(n))
+  if (!usable(moveAnim)) moveAnim = names.find(n => /^(move|walk|run|dash|charge)(_[a-z0-9]*)?$/i.test(n))
+
+  // 目标动画不存在时退回第一个可用动画，避免 setAnimation 抛异常导致资源加载失败
+  const chosen = racing ? moveAnim : idleAnim
+  const targetAnim = usable(chosen) ? chosen : names[0]
+  if (!targetAnim) return
+
+  if (racerAnimations.get(spine) === targetAnim) return
+  spine.state.setAnimation(0, targetAnim, true)
+  racerAnimations.set(spine, targetAnim)
 }
 
 async function loadSpine(assetKey: string): Promise<Spine | null> {
@@ -350,15 +417,13 @@ async function loadSpine(assetKey: string): Promise<Spine | null> {
     const resource: any = await PIXI.Assets.load(skel)
     const sp = new Spine(resource.spineData)
     sp.autoUpdate = true
-    const anims =
-      (sp as any)?.spineData?.animations?.map((a: any) => String(a?.name || '')).filter(Boolean) || []
-    const anim = pickDefaultAnimation(anims)
-    if (anim) sp.state.setAnimation(0, anim, true)
+    setRacerAnimation(sp, false)
     try {
       ;(sp as any).update(0)
     } catch {}
     return sp
-  } catch {
+  } catch (e) {
+    console.error(`[RaceScene] 加载 spine 资源失败: ${assetKey}`, e)
     return null
   }
 }
@@ -395,17 +460,60 @@ function hideAllRacers(): void {
 }
 
 async function ensureRacers(): Promise<void> {
-  if (!worldLayer) return
+  const layer = worldLayer
+  if (!layer) return
+  // 每次状态刷新同步全部参赛者的 DB 动画/缩放配置（轮次切换或后台改配置后都能立即生效）
+  for (const p of st.value.participants) {
+    participantAnimConfig.set(p.id, {
+      idleAnim: p.idleAnimation || 'Idle',
+      moveAnim: p.moveAnimation || 'Move_Loop',
+      displayScale: p.displayScale != null && p.displayScale > 0 ? p.displayScale : 1.0
+    })
+  }
+  const alive = new Set(st.value.participants.map((p) => p.id))
+  for (const [pid, rs] of racers.entries()) {
+    if (!alive.has(pid)) {
+      rs.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+      rs.label.destroy()
+      racers.delete(pid)
+    }
+  }
   const need = st.value.participants.filter((p) => !racers.has(p.id))
-  for (const p of need) {
+  if (need.length === 0) return
+  
+  // 并行预加载所有缺失的 spine 资源
+  const loadPromises = need.map(async (p) => {
+    const cfg = participantAnimConfig.get(p.id)
+    const displayScale = cfg?.displayScale ?? 1.0
+    
     const lane = Math.min(4, Math.max(0, (p.sortNo ?? 1) - 1))
     const sp = await loadSpine(p.assetKey)
-    if (!sp) continue
+    return { p, sp, lane, displayScale }
+  })
+  
+  const results = await Promise.all(loadPromises)
+  
+  let loadedCount = 0
+  let failedCount = 0
+  
+  for (const { p, sp, lane, displayScale } of results) {
+    if (!sp) {
+      console.error(`[RaceScene] 参赛者 ${p.name || p.assetKey} (id=${p.id}) spine 加载失败，assetKey=${p.assetKey}`)
+      failedCount++
+      continue
+    }
+    if (disposed || worldLayer !== layer || racers.has(p.id) || !st.value.participants.some((item) => item.id === p.id)) {
+      sp.destroy({ children: true, texture: false, baseTexture: false } as any)
+      continue
+    }
+    setRacerAnimation(sp, status.value === 'RACING', p.id)
+    sp.visible = status.value !== 'PODIUM'
     const bounds = sp.getLocalBounds()
     const bw = Math.max(1, bounds.width)
     const bh = Math.max(1, bounds.height)
-    const scale = Math.min(150 / bw, (LANE_H * 0.72) / bh)
-    sp.scale.set(scale, scale)
+    const baseScale = Math.min(150 / bw, (LANE_H * 0.72) / bh)
+    const finalScale = baseScale * displayScale // 应用自定义缩放
+    sp.scale.set(finalScale, finalScale)
     const label = new PIXI.Text(p.name || p.assetKey || '', {
       fill: '#fde68a',
       fontSize: 15,
@@ -414,29 +522,25 @@ async function ensureRacers(): Promise<void> {
       strokeThickness: 4
     })
     label.anchor.set(0.5, 0)
-    worldLayer.addChild(sp)
-    worldLayer.addChild(label)
+    label.visible = sp.visible
+    layer.addChild(sp)
+    layer.addChild(label)
     const rs: RacerSprite = {
       pid: p.id,
       lane,
       spine: sp,
       label,
-      scale,
+      scale: finalScale,
       centerX: bounds.x + bounds.width / 2,
       centerY: bounds.y + bounds.height / 2
     }
     racers.set(p.id, rs)
     if (!profiles) racerPose(p.id, START_X + 40)
+    loadedCount++
   }
-  const alive = new Set(st.value.participants.map((p) => p.id))
-  for (const [pid, rs] of racers.entries()) {
-    if (!alive.has(pid)) {
-      worldLayer.removeChild(rs.spine)
-      worldLayer.removeChild(rs.label)
-      rs.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
-      rs.label.destroy()
-      racers.delete(pid)
-    }
+  
+  if (failedCount > 0) {
+    console.warn(`[RaceScene] 预加载完成: ${loadedCount} 成功, ${failedCount} 失败`)
   }
 }
 
@@ -503,6 +607,8 @@ function drawPodium(): void {
     worldLayer.addChild(podiumGfx)
   }
   const g = podiumGfx
+  g.visible = true
+  for (const child of g.removeChildren()) child.destroy()
   g.clear()
   const baseY = TRACK_H - 10
   const w = 150
@@ -551,10 +657,15 @@ async function placeOnPodium(
   cx: number,
   baseY: number
 ): Promise<void> {
+  const roundId = round.value?.id
   let rs = podiumSprites.get(pid)
   if (!rs) {
     const sp = await loadSpine(p.assetKey)
-    if (!sp || !worldLayer) return
+    if (!sp) return
+    if (disposed || !worldLayer || round.value?.id !== roundId || status.value !== 'PODIUM' || podiumSprites.has(pid)) {
+      sp.destroy({ children: true, texture: false, baseTexture: false } as any)
+      return
+    }
     const bounds = sp.getLocalBounds()
     const bw = Math.max(1, bounds.width)
     const bh = Math.max(1, bounds.height)
@@ -581,6 +692,7 @@ async function placeOnPodium(
     }
     podiumSprites.set(pid, rs)
   }
+  setRacerAnimation(rs.spine, false, pid)
   rs.spine.visible = true
   rs.label.visible = true
   rs.spine.x = cx - rs.centerX * rs.scale
@@ -613,22 +725,52 @@ function tickRace(): void {
   if (status.value === 'RACING' && profiles && raceStartAtMs) {
     const elapsed = serverNow - raceStartAtMs
     const idx = clamp(Math.floor(elapsed / TICK_MS), 0, TOTAL_TICKS)
+    
+    // 调试日志：检查中途进入时的时间计算
+    if (!tickRaceLogged) {
+      console.log('[race] tickRace: status=RACING, elapsed=', elapsed, 'ms, idx=', idx, '/', TOTAL_TICKS, ', raceStartAt=', raceStartAtMs, ', serverNow=', serverNow)
+      tickRaceLogged = true
+    }
+    
+    // 计算每个参赛者的当前位置和排名
+    const positions: Array<{ pid: number; pos: number; lane: number }> = []
     for (const rs of racers.values()) {
-      const pos = profiles[Math.min(4, Math.max(0, rs.lane))]?.[idx] ?? 0
+      const pos = Math.min(TRACK_LENGTH, profiles[Math.min(4, Math.max(0, rs.lane))]?.[idx] ?? 0)
       const x = START_X + (pos / TRACK_LENGTH) * (FINISH_X - START_X)
+      
+      // 根据进度决定是否播放跑步动画
+      const isRunning = elapsed >= 0 && idx < TOTAL_TICKS && pos < TRACK_LENGTH
+      setRacerAnimation(rs.spine, isRunning, rs.pid)
       rs.spine.visible = true
       rs.label.visible = true
       racerPose(rs.pid, x)
+      positions.push({ pid: rs.pid, pos, lane: rs.lane })
     }
-    if (elapsed >= TOTAL_TICKS * TICK_MS) {
-      // 等待结算广播，保持最终位置
+    
+    // 按位置排序计算实时名次
+    positions.sort((a, b) => b.pos - a.pos || a.lane - b.lane)
+    const rankMap = new Map<number, number>()
+    positions.forEach((p, i) => rankMap.set(p.pid, i + 1))
+    
+    // 更新标签显示名次（带序数后缀）
+    for (const rs of racers.values()) {
+      const rank = rankMap.get(rs.pid) ?? 0
+      const name = st.value.participants.find(p => p.id === rs.pid)?.name || ''
+      const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th'
+      rs.label.text = `${rank}${suffix} ${name}`
     }
   } else if (status.value === 'PODIUM') {
     // 领奖台由 layoutPodium 摆放
+    for (const rs of racers.values()) {
+      setRacerAnimation(rs.spine, false, rs.pid) // 切回 Idle
+    }
   } else if (status.value === 'BETTING') {
     for (const rs of racers.values()) {
+      setRacerAnimation(rs.spine, false, rs.pid) // 切回 Idle
       rs.spine.visible = true
       rs.label.visible = true
+      const name = st.value.participants.find(p => p.id === rs.pid)?.name || ''
+      rs.label.text = name
     }
     for (const rs of podiumSprites.values()) {
       rs.spine.visible = false
@@ -637,7 +779,9 @@ function tickRace(): void {
   }
 }
 
-function initPixi(): void {
+const loading = ref(true)
+
+async function initPixi(): Promise<void> {
   const el = trackWrapRef.value
   if (!el) return
   app = new PIXI.Application({ backgroundAlpha: 0, antialias: true, resizeTo: el })
@@ -652,7 +796,15 @@ function initPixi(): void {
   app.stage.addChild(worldLayer)
   drawTrack()
   updateViewport()
-  void ensureRacers()
+  
+  // 预加载所有参赛者 spine 资源
+  try {
+    await ensureRacers()
+  } catch (e) {
+    console.warn('预加载参赛者资源失败:', e)
+  }
+  loading.value = false
+  
   applyRoundState()
   app.ticker.add(tickRace)
 }
@@ -693,6 +845,12 @@ function exitScene(): void {
 
 defineExpose({ onRaceMsg: handleRaceMsg })
 
+watch(status, (value) => {
+  for (const racer of racers.values()) {
+    setRacerAnimation(racer.spine, value === 'RACING', racer.pid)
+  }
+})
+
 onMounted(() => {
   nowMs.value = props.getServerNow()
   clockTimer = window.setInterval(() => {
@@ -704,6 +862,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
+  stateRequest += 1
   if (clockTimer) {
     clearInterval(clockTimer)
     clockTimer = null
@@ -743,8 +903,10 @@ onBeforeUnmount(() => {
           }}
         </span>
         <span v-if="round" class="text-xs text-gray-400">第 {{ round.roundNo }} 场</span>
+        <span v-if="round?.developerControlled" class="text-xs text-amber-300">演示场 · 禁止下注</span>
       </div>
-      <div class="flex items-center gap-4">
+      <div class="flex flex-wrap items-center justify-end gap-3">
+        <RaceDeveloperConsole v-if="auth.isSuperAdmin && st.race" :race-id="st.race.id" @changed="refreshState" />
         <div class="text-xs text-gray-400">全房间奖池</div>
         <div class="text-sm font-bold text-amber-300">{{ pool.toLocaleString() }} <span class="text-xs font-normal text-gray-400">龙门币</span></div>
         <div v-if="balance !== null" class="text-xs text-gray-400">
@@ -762,13 +924,17 @@ onBeforeUnmount(() => {
     <!-- 赛道 -->
     <div class="relative flex-1 min-h-0">
       <div class="absolute inset-0" ref="trackWrapRef"></div>
+      <!-- 加载遮罩 -->
+      <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-20">
+        <div class="text-gray-300 text-sm">正在加载参赛者资源...</div>
+      </div>
       <!-- 中央倒计时横幅 -->
       <div class="absolute left-1/2 top-3 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/55 border border-white/10 text-gray-100 text-sm backdrop-blur-sm">
         {{ countdownText }}
       </div>
       <!-- 下注面板（竞猜阶段显示） -->
       <div
-        v-if="status === 'BETTING'"
+        v-if="status === 'BETTING' && !round?.developerControlled"
         class="absolute left-3 bottom-3 w-[420px] max-w-[calc(100%-24px)] rounded-xl bg-black/60 border border-white/10 backdrop-blur-md p-3 text-gray-100"
       >
         <div class="flex items-center justify-between text-xs text-gray-300">
@@ -777,6 +943,9 @@ onBeforeUnmount(() => {
             <span class="text-gray-500"> / {{ st.minTotalBet }}-{{ st.maxTotalBet }} 龙门币</span>
           </div>
           <div>截止 {{ round ? fmtTime(round.betEndAt) : '-' }}</div>
+        </div>
+        <div class="mt-1 text-[10px] text-gray-500">
+          前三名均中奖 · 赔率 = 奖池÷3 ÷ 该对象彩池 · 前三名全无人押中时全额退款
         </div>
         <div class="mt-2 flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
           <div v-for="p in st.participants" :key="p.id" class="flex items-center gap-2">
@@ -787,6 +956,13 @@ onBeforeUnmount(() => {
               :class="p.type === 3 ? 'bg-purple-500/15 border-purple-400/40 text-purple-300' : 'bg-red-500/15 border-red-400/40 text-red-300'"
             >
               {{ p.type === 3 ? 'BOSS' : '敌人' }}
+            </span>
+            <span
+              class="w-12 text-right text-xs tabular-nums"
+              :class="oddsFor(p.id) === null ? 'text-gray-600' : 'text-amber-300'"
+              :title="oddsFor(p.id) === null ? '暂无人押注' : '当前估算赔率，随彩池实时变化'"
+            >
+              {{ oddsFor(p.id) === null ? '—' : `@${fmtOdds(oddsFor(p.id))}` }}
             </span>
             <span class="text-xs text-gray-500 w-16 text-right">
               已投 {{ (myBetByPid.get(p.id) ?? 0).toLocaleString() }}
@@ -840,14 +1016,20 @@ onBeforeUnmount(() => {
               {{ r.rank }}
             </span>
             <span class="flex-1 truncate">{{ r.name }}</span>
-            <span class="text-xs text-gray-400">{{ r.rank === 1 ? '60%' : r.rank === 2 ? '30%' : '10%' }}</span>
+            <span class="text-xs" :class="r.rank <= 3 ? 'text-emerald-300' : 'text-gray-500'">
+              {{ r.rank <= 3 ? '中奖' : '未中奖' }}
+            </span>
           </div>
         </div>
         <div class="mt-2 text-xs text-gray-400">
-          奖池 {{ pool.toLocaleString() }} · 已发放 {{ (round?.paidTotal ?? 0).toLocaleString() }}
+          <template v-if="refundNotice">前三名无人押中，奖池已全额退款</template>
+          <template v-else>奖池 {{ pool.toLocaleString() }} · 已发放 {{ (round?.paidTotal ?? 0).toLocaleString() }}</template>
         </div>
         <div v-if="myResult && myResult.roundId === round?.id" class="mt-2 rounded-lg bg-white/5 border border-white/10 p-2 text-xs">
-          <div v-if="myResult.payout > 0" class="text-emerald-300">
+          <div v-if="myResult.refunded" class="text-sky-300">
+            你本场下注 {{ myResult.betTotal.toLocaleString() }} 龙门币，无人押中前三名，已全额退款
+          </div>
+          <div v-else-if="myResult.payout > 0" class="text-emerald-300">
             你本场下注 {{ myResult.betTotal.toLocaleString() }}，中奖 <b>{{ myResult.payout.toLocaleString() }}</b> 龙门币
           </div>
           <div v-else class="text-gray-400">

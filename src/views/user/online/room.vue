@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import 'pixi-spine'
 import * as PIXI from 'pixi.js'
@@ -134,7 +134,8 @@ let ctrlSocket: WebSocket | null = null
 
 let destroyed = false
 let reconnectTimer: number | null = null
-let reconnectAttempt = 0
+const reconnectAttempt = ref(0)
+const connectionLost = ref(false)
 
 let myClientId = ''
 let myResumeKey = ''
@@ -594,6 +595,11 @@ function applyState(rp: RenderedPlayer, wW: number, wH: number, snap = false): v
 }
 
 function onKeyDown(e: KeyboardEvent): void {
+  if (e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"]')) {
+    keyDown.clear()
+    shiftPressed = false
+    return
+  }
   const key = e.key.toLowerCase()
   if (key === 'shift') {
     shiftPressed = true
@@ -1026,13 +1032,20 @@ function handleMsg(m: WsMsg): void {
 function scheduleReconnect(): void {
   if (destroyed) return
   if (reconnectTimer) return
-  const attempt = Math.min(8, reconnectAttempt)
+  if (!socket || socket.readyState === WebSocket.CLOSED) {
+    connectionLost.value = true
+  }
+  const attempt = Math.min(8, reconnectAttempt.value)
   const wait = Math.min(8000, 500 * 2 ** attempt)
-  reconnectAttempt += 1
+  reconnectAttempt.value += 1
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null
     void connect()
   }, wait)
+}
+
+function reloadPage(): void {
+  window.location.reload()
 }
 
 async function refreshRaceState(): Promise<void> {
@@ -1054,6 +1067,12 @@ function toggleRaceScene(): void {
   if (!raceState.value?.exists) return
   raceSceneVisible.value = !raceSceneVisible.value
 }
+
+watch(raceSceneVisible, () => {
+  closeProfileCard()
+  app?.resize()
+  updateViewport()
+}, { flush: 'post' })
 
 async function connect(): Promise<void> {
   const token = String(auth.session?.accessToken || '').trim()
@@ -1094,7 +1113,8 @@ async function connect(): Promise<void> {
     socket = new WebSocket(url)
 
     socket.onopen = () => {
-      reconnectAttempt = 0
+      reconnectAttempt.value = 0
+      connectionLost.value = false
       const joinAssetKey = String(selectedAssetKey.value || assetKey.value || '').trim()
       const join: any = { type: 'join', roomId: roomId.value, assetKey: joinAssetKey, nickname: myNickname }
       const pw = String(sessionStorage.getItem(`online_room_pw_${roomId.value}`) || '').trim()
@@ -1238,6 +1258,20 @@ onBeforeUnmount(() => {
 <template>
   <div class="relative min-h-screen bg-[#0b1220] overflow-hidden">
     <div
+      v-if="connectionLost"
+      class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/70 backdrop-blur-sm text-gray-100"
+    >
+      <div class="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
+      <div class="text-base font-semibold">连接已断开，正在重连…</div>
+      <div class="text-xs text-gray-400">第 {{ reconnectAttempt }} 次尝试</div>
+      <button
+        class="mt-2 rounded-md border border-white/10 bg-white/5 px-4 py-1.5 text-sm hover:bg-white/10 cursor-pointer"
+        @click="reloadPage"
+      >
+        重新加载页面
+      </button>
+    </div>
+    <div
       v-if="cardVisible"
       class="absolute z-20 w-[300px] rounded-xl border border-white/10 bg-black/70 backdrop-blur-md text-gray-100 p-3"
       :style="{ left: `${cardPos.x}px`, top: `${cardPos.y}px` }"
@@ -1312,7 +1346,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div v-if="raceSceneVisible" class="absolute left-0 right-0 top-0 h-[55%] z-20">
+    <div v-if="raceSceneVisible" class="absolute inset-x-0 top-0 h-1/2 z-20">
       <RaceScene
         ref="raceSceneRef"
         :room-id="roomId"
@@ -1322,7 +1356,10 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <div class="absolute right-6 top-6 z-10">
+    <div
+      class="absolute right-6 z-10"
+      :class="raceSceneVisible ? 'top-[calc(50%+1.5rem)]' : 'top-6'"
+    >
       <button
         class="mb-3 w-full px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
         @click="back"
@@ -1359,8 +1396,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      class="absolute left-0 right-0 bottom-0"
-      :class="raceSceneVisible ? 'top-[55%]' : 'top-0'"
+      class="absolute inset-x-0 bottom-0"
+      :class="raceSceneVisible ? 'top-1/2' : 'top-0'"
       ref="wrapRef"
     ></div>
   </div>

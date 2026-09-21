@@ -10,15 +10,18 @@ const props = withDefaults(
     animationName?: string
     loop?: boolean
     fit?: 'contain' | 'cover'
+    scale?: number
+    skinName?: string
   }>(),
   {
     loop: true,
     fit: 'contain',
+    scale: 1.0,
   },
 )
 
 const emit = defineEmits<{
-  loaded: [payload: { spine: Spine; animations: string[] }]
+  loaded: [payload: { spine: Spine; animations: string[]; skins: string[] }]
   error: [message: string]
 }>()
 
@@ -26,6 +29,8 @@ const containerRef = ref<HTMLDivElement | null>(null)
 let app: PIXI.Application | null = null
 let spine: Spine | null = null
 let currentSkelUrl = ''
+let resizeObserver: ResizeObserver | null = null
+let resizeTimer: ReturnType<typeof setTimeout> | null = null
 
 function pickDefaultAnimation(list: string[]): string {
   const l = list.map((x) => String(x || '')).filter(Boolean)
@@ -40,7 +45,45 @@ function pickDefaultAnimation(list: string[]): string {
   return pick(['relax', 'idle', 'stand', 'wait', 'default']) || l[0] || ''
 }
 
+// 将 spine 居中到容器中心（同步执行）
+function centerSpine(): void {
+  if (!spine || !app) return
+  const el = containerRef.value
+  if (!el) return
+
+  const w = Math.max(1, el.clientWidth)
+  const h = Math.max(1, el.clientHeight)
+
+  // 获取 spine 的本地 bounds（不受 transform 影响）
+  const localBounds = spine.getLocalBounds()
+  const bw = Math.max(1, localBounds.width)
+  const bh = Math.max(1, localBounds.height)
+
+  // 计算缩放：基于本地尺寸适配容器
+  const baseScale =
+    props.fit === 'cover'
+      ? Math.max(w / bw, h / bh)
+      : Math.min(w / bw, h / bh)
+  const finalScale = baseScale * (props.scale || 1.0)
+
+  // 设置缩放
+  spine.scale.set(finalScale, finalScale)
+
+  // 将 spine 的原点（0,0）移到容器中心，再减去本地 bounds 的偏移
+  // 这样角色的视觉中心就会在容器正中央
+  spine.x = w / 2 - (localBounds.x + bw / 2) * finalScale
+  spine.y = h / 2 - (localBounds.y + bh / 2) * finalScale
+}
+
 function destroy(): void {
+  if (resizeTimer) {
+    clearTimeout(resizeTimer)
+    resizeTimer = null
+  }
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   spine = null
   if (app) {
     app.destroy(true, { children: true, texture: false, baseTexture: false })
@@ -57,6 +100,15 @@ async function load(sk: string): Promise<void> {
   destroy()
   currentSkelUrl = sk
 
+  // 设置 ResizeObserver 监听容器大小变化（带防抖）
+  resizeObserver = new ResizeObserver(() => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      centerSpine()
+    }, 100)
+  })
+  resizeObserver.observe(el)
+
   app = new PIXI.Application({
     backgroundAlpha: 0,
     antialias: true,
@@ -71,6 +123,18 @@ async function load(sk: string): Promise<void> {
     app.stage.addChild(sp)
 
     const anims = (spine as any)?.spineData?.animations?.map((a: any) => String(a?.name || '')).filter(Boolean) || []
+    const skins = (spine as any)?.spineData?.skins?.map((s: any) => String(s?.name || '')).filter(Boolean) || []
+
+    // 设置皮肤
+    if (props.skinName && skins.includes(props.skinName)) {
+      try {
+        sp.skeleton.setSkinByName(props.skinName)
+        sp.skeleton.setSlotsToSetupPose()
+      } catch {
+        // skin 不存在则忽略
+      }
+    }
+
     const target =
       props.animationName && anims.includes(props.animationName) ? props.animationName : pickDefaultAnimation(anims)
     if (target) {
@@ -78,21 +142,10 @@ async function load(sk: string): Promise<void> {
       sp.autoUpdate = true
     }
 
-    const bounds = sp.getBounds()
-    const w = Math.max(1, el.clientWidth)
-    const h = Math.max(1, el.clientHeight)
-    const bw = Math.max(1, bounds.width)
-    const bh = Math.max(1, bounds.height)
-    const scale =
-      props.fit === 'cover'
-        ? Math.max(w / bw, h / bh)
-        : Math.min(w / bw, h / bh)
+    // 直接居中（同步执行）
+    centerSpine()
 
-    sp.scale.set(scale, scale)
-    sp.x = w / 2 - (bounds.x + bounds.width / 2) * scale
-    sp.y = h / 2 - (bounds.y + bounds.height / 2) * scale
-
-    emit('loaded', { spine: sp, animations: anims })
+    emit('loaded', { spine: sp, animations: anims, skins })
   } catch (e) {
     emit('error', (e as any)?.message || '资源加载失败')
   }
@@ -105,6 +158,8 @@ function replay(): void {
     props.animationName && anims.includes(props.animationName) ? props.animationName : pickDefaultAnimation(anims)
   if (!target) return
   spine.state.setAnimation(0, target, props.loop)
+  // 动画切换后重新居中
+  centerSpine()
 }
 
 onMounted(() => {
@@ -123,6 +178,31 @@ watch(
 watch(
   () => `${props.animationName || ''}__${props.loop}`,
   () => replay(),
+)
+
+// 监听缩放变化，实时应用并重新居中
+watch(
+  () => props.scale,
+  () => {
+    centerSpine()
+  },
+)
+
+// 监听皮肤变化，实时切换并重新居中
+watch(
+  () => props.skinName,
+  (newSkin) => {
+    if (!spine) return
+    if (!newSkin) return
+    try {
+      spine.skeleton.setSkinByName(newSkin)
+      spine.skeleton.setSlotsToSetupPose()
+      // 皮肤切换后重新居中
+      centerSpine()
+    } catch {
+      // skin 不存在则忽略
+    }
+  },
 )
 
 onBeforeUnmount(() => destroy())

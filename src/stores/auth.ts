@@ -111,6 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => isAuthenticated.value)
   const isAdmin = computed(() => String(role.value ?? '').toUpperCase() === 'ADMIN' || String(role.value ?? '').toUpperCase() === 'SUPER_ADMIN')
+  const isSuperAdmin = computed(() => String(role.value ?? '').toUpperCase() === 'SUPER_ADMIN')
   const userId = computed(() => userIdComputed.value || Number(session.value?.userId ?? 0) || 0)
 
   async function fetchProfile(): Promise<any | null> {
@@ -208,6 +209,7 @@ export const useAuthStore = defineStore('auth', () => {
     // v1 兼容
     isLoggedIn,
     isAdmin,
+    isSuperAdmin,
     nickname,
     profile,
     userId,

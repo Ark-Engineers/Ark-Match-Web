@@ -36,15 +36,50 @@ export class Mulberry32 {
 export function buildProfiles(seedHex: string): number[][] {
   const baseSeed = parseInt(seedHex.trim(), 16) | 0
   const profiles: number[][] = []
+  
   for (let i = 0; i < RACER_COUNT; i++) {
     const rng = new Mulberry32((baseSeed + Math.imul(i, MIX)) | 0)
-    const m = M_MIN + rng.next() * M_RANGE
+    const mBase = M_MIN + rng.next() * M_RANGE
+    
+    // 为每个参赛者生成速度变化曲线（分段加速/减速）
+    const phaseCount = 3 + Math.floor(rng.next() * 4) // 3-6 个速度阶段
+    const phaseBoundaries: number[] = new Array(phaseCount + 1)
+    const phaseSpeeds: number[] = new Array(phaseCount)
+    phaseBoundaries[0] = 0
+    
+    for (let p = 0; p < phaseCount; p++) {
+      // 随机分配阶段长度（至少 100 tick）
+      const remaining = TOTAL_TICKS - (phaseBoundaries[p] ?? 0)
+      if (p === phaseCount - 1) {
+        phaseBoundaries[p + 1] = TOTAL_TICKS
+      } else {
+        const minLen = Math.max(100, Math.floor(remaining / (phaseCount - p)))
+        const maxLen = Math.min(remaining - 100 * (phaseCount - p - 1), remaining)
+        phaseBoundaries[p + 1] = (phaseBoundaries[p] ?? 0) + minLen + Math.floor(rng.next() * (maxLen - minLen))
+      }
+      // 每个阶段的速度系数（0.7-1.3 倍基础速度）
+      phaseSpeeds[p] = 0.7 + rng.next() * 0.6
+    }
+    
     let pos = 0.0
     const curve: number[] = new Array(TOTAL_TICKS + 1)
     curve[0] = 0.0
+    
     for (let t = 0; t < TOTAL_TICKS; t++) {
+      // 确定当前处于哪个速度阶段
+      let currentPhase = 0
+      for (let p = 0; p < phaseCount; p++) {
+        const boundaryP = phaseBoundaries[p] ?? 0
+        const boundaryP1 = phaseBoundaries[p + 1] ?? 0
+        if (t >= boundaryP && t < boundaryP1) {
+          currentPhase = p
+          break
+        }
+      }
+      
       const jitter = 1.0 + (rng.next() * 2.0 - 1.0) * JITTER
-      pos += BASE_SPEED * m * jitter * (TICK_MS / 1000.0)
+      const speedFactor = phaseSpeeds[currentPhase] ?? 1.0
+      pos += BASE_SPEED * mBase * speedFactor * jitter * (TICK_MS / 1000.0)
       curve[t + 1] = pos
     }
     profiles.push(curve)

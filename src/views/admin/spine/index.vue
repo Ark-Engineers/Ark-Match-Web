@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 
@@ -15,6 +15,9 @@ type SpineAssetItem = {
   assetKey: string
   name: string | null
   type: number
+  idleAnimation: string | null
+  moveAnimation: string | null
+  displayScale: number | null
   createdBy: number
   updatedBy: number
   createdAt: string
@@ -102,6 +105,9 @@ const importMode = ref<'files' | 'zip'>('files')
 const importForm = reactive({
   name: '',
   type: 1,
+  idleAnimation: '',
+  moveAnimation: '',
+  displayScale: 1.0,
   zip: null as File | null,
   atlas: null as File | null,
   skel: null as File | null,
@@ -109,21 +115,78 @@ const importForm = reactive({
   extras: [] as File[],
 })
 
+// 导入预览相关
+const importPreviewSkelUrl = ref('')
+const importPreviewAnimations = ref<string[]>([])
+const importSelectedAnimation = ref('')
+const importPreviewSkin = ref('')
+const importPreviewSkins = ref<string[]>([])
+const importPreviewSlot = ref('')
+const importPreviewSlots = ref<string[]>([])
+
 function resetImportForm(): void {
   importForm.name = ''
   importForm.type = 1
+  importForm.idleAnimation = ''
+  importForm.moveAnimation = ''
+  importForm.displayScale = 1.0
   importForm.zip = null
   importForm.atlas = null
   importForm.skel = null
   importForm.pngs = []
   importForm.extras = []
   importMode.value = 'files'
+  importPreviewSkelUrl.value = ''
+  importPreviewAnimations.value = []
+  importSelectedAnimation.value = ''
+  importPreviewSkin.value = ''
+  importPreviewSkins.value = []
+  importPreviewSlot.value = ''
+  importPreviewSlots.value = []
 }
 
 async function openImport(): Promise<void> {
   resetImportForm()
   importVisible.value = true
   await nextTick()
+}
+
+// 当用户选择了所有必要文件后，生成预览 URL
+watch(
+  () => [importForm.atlas, importForm.skel, importForm.pngs.length],
+  ([atlas, skel, pngCount]) => {
+    if (!atlas || !skel || pngCount === 0) {
+      importPreviewSkelUrl.value = ''
+      return
+    }
+    // 使用 atlas 文件作为加载入口（PIXI.Assets.load 会通过 atlas 引用找到 skel 和 png）
+    const url = URL.createObjectURL(atlas as File)
+    importPreviewSkelUrl.value = url
+  },
+)
+
+function onImportPreviewLoaded(payload: { animations: string[]; skins: string[] }): void {
+  importPreviewAnimations.value = payload.animations || []
+  importPreviewSkins.value = payload.skins || []
+  if (!importSelectedAnimation.value && importPreviewAnimations.value.length > 0) {
+    importSelectedAnimation.value = importPreviewAnimations.value[0] || ''
+  }
+}
+
+function onImportPreviewError(msg: string): void {
+  console.warn('导入预览加载失败:', msg)
+}
+
+function setIdleAnimFromPreview(): void {
+  if (!importSelectedAnimation.value) return
+  importForm.idleAnimation = importSelectedAnimation.value
+  ElMessage.success(`已设置待机动画: ${importSelectedAnimation.value}`)
+}
+
+function setMoveAnimFromPreview(): void {
+  if (!importSelectedAnimation.value) return
+  importForm.moveAnimation = importSelectedAnimation.value
+  ElMessage.success(`已设置移动动画: ${importSelectedAnimation.value}`)
 }
 
 function pickSingleFile(files: FileList | null): File | null {
@@ -143,6 +206,9 @@ async function doImport(): Promise<void> {
     const form = new FormData()
     if (importForm.name.trim()) form.append('name', importForm.name.trim())
     form.append('type', String(importForm.type))
+    if (importForm.idleAnimation.trim()) form.append('idleAnimation', importForm.idleAnimation.trim())
+    if (importForm.moveAnimation.trim()) form.append('moveAnimation', importForm.moveAnimation.trim())
+    if (importForm.displayScale && importForm.displayScale !== 1.0) form.append('displayScale', String(importForm.displayScale))
     let url = '/admin/spine/import'
     if (importMode.value === 'zip') {
       if (!importForm.zip) {
@@ -201,8 +267,13 @@ const previewDetail = ref<SpineDetail | null>(null)
 
 const selectedAnimation = ref('')
 const previewAnimations = ref<string[]>([])
+const detailPreviewSkins = ref<string[]>([])
+const detailPreviewSkin = ref('')
+const detailPreviewScale = ref(1.0)
+let scaleSaveTimer: ReturnType<typeof setTimeout> | null = null
+
 const previewSkelUrl = computed(() => {
-  const d = previewDetail.value
+  const d = currentDetail.value || previewDetail.value
   if (!d) return ''
   const key = d.asset.assetKey
   return apiUrl(`/assets/spine/${key}/${key}.skel`)
@@ -213,11 +284,66 @@ async function openPreviewFromDetail(): Promise<void> {
   previewDetail.value = currentDetail.value
   selectedAnimation.value = ''
   previewAnimations.value = []
+  detailPreviewSkins.value = []
+  detailPreviewSkin.value = ''
+  detailPreviewScale.value = currentDetail.value.asset.displayScale ?? 1.0
   previewVisible.value = true
   await nextTick()
 }
 
-function onPreviewLoaded(payload: { animations: string[] }): void {
+function onDetailPreviewLoaded(payload: { animations: string[]; skins: string[] }): void {
+  previewAnimations.value = payload.animations || []
+  detailPreviewSkins.value = payload.skins || []
+  if (!selectedAnimation.value && previewAnimations.value.length > 0) {
+    selectedAnimation.value = previewAnimations.value[0] || ''
+  }
+}
+
+function onDetailPreviewError(msg: string): void {
+  console.warn('管理页预览加载失败:', msg)
+}
+
+function setIdleFromPreview(): void {
+  if (!selectedAnimation.value) return
+  editForm.idleAnimation = selectedAnimation.value
+  ElMessage.success(`已设置待机动画: ${selectedAnimation.value}`)
+}
+
+function setMoveFromPreview(): void {
+  if (!selectedAnimation.value) return
+  editForm.moveAnimation = selectedAnimation.value
+  ElMessage.success(`已设置移动动画: ${selectedAnimation.value}`)
+}
+
+// 监听缩放值变化，防抖后自动保存到数据库
+watch(
+  () => detailPreviewScale.value,
+  (newScale) => {
+    const detail = currentDetail.value
+    if (!detail) return
+    if (scaleSaveTimer) clearTimeout(scaleSaveTimer)
+    scaleSaveTimer = setTimeout(async () => {
+      try {
+        const form = new FormData()
+        form.append('displayScale', String(newScale))
+        // 同时更新 editForm 中的值，确保保存时一致
+        editForm.displayScale = newScale
+        const res = await http.post<ApiResponse<SpineDetail>>(`/admin/spine/${detail.asset.id}/update`, form)
+        if (res.data.code === 0) {
+          // 更新 currentDetail 中的值
+          detail.asset.displayScale = newScale
+          ElMessage.success(`显示缩放已更新: ${newScale.toFixed(2)}`)
+        } else {
+          ElMessage.error(res.data.message || '更新失败')
+        }
+      } catch (e) {
+        console.error('保存缩放失败:', e)
+      }
+    }, 500)
+  },
+)
+
+function onPreviewLoaded(payload: { animations: string[]; skins: string[] }): void {
   previewAnimations.value = payload.animations || []
   if (!selectedAnimation.value && previewAnimations.value.length > 0) {
     selectedAnimation.value = previewAnimations.value[0] || ''
@@ -234,6 +360,9 @@ const editForm = reactive({
   id: 0,
   name: '',
   type: 1,
+  idleAnimation: '',
+  moveAnimation: '',
+  displayScale: 1.0,
   updateFiles: false,
   atlas: null as File | null,
   skel: null as File | null,
@@ -259,6 +388,9 @@ async function openEdit(): Promise<void> {
   editForm.id = d.asset.id
   editForm.name = d.asset.name || ''
   editForm.type = d.asset.type || 1
+  editForm.idleAnimation = d.asset.idleAnimation || ''
+  editForm.moveAnimation = d.asset.moveAnimation || ''
+  editForm.displayScale = d.asset.displayScale ?? 1.0
   editVisible.value = true
   await nextTick()
 }
@@ -268,8 +400,12 @@ async function doUpdate(): Promise<void> {
   editing.value = true
   try {
     const form = new FormData()
-    if (editForm.name.trim()) form.append('name', editForm.name.trim())
+    // 后端 update 为部分更新语义：name 始终携带，空串表示清除名称
+    form.append('name', editForm.name.trim())
     form.append('type', String(editForm.type))
+    if (editForm.idleAnimation.trim()) form.append('idleAnimation', editForm.idleAnimation.trim())
+    if (editForm.moveAnimation.trim()) form.append('moveAnimation', editForm.moveAnimation.trim())
+    if (editForm.displayScale && editForm.displayScale !== 1.0) form.append('displayScale', String(editForm.displayScale))
     if (editForm.updateFiles) {
       if (!editForm.atlas || !editForm.skel || editForm.pngs.length <= 0) {
         ElMessage.warning('更新文件需要同时提供 atlas、skel、png')
@@ -395,6 +531,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  if (scaleSaveTimer) clearTimeout(scaleSaveTimer)
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
 })
@@ -466,6 +603,19 @@ onBeforeUnmount(() => {
             <el-radio-button v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.value">{{ o.label }}</el-radio-button>
           </el-radio-group>
         </div>
+        <div class="form-row">
+          <div class="form-label">待机动画</div>
+          <el-input v-model="importForm.idleAnimation" placeholder="如 Idle、Standby（可选）" maxlength="64" />
+        </div>
+        <div class="form-row">
+          <div class="form-label">移动动画</div>
+          <el-input v-model="importForm.moveAnimation" placeholder="如 Move、Walk、Run（可选）" maxlength="64" />
+        </div>
+        <div class="form-row">
+          <div class="form-label">显示缩放</div>
+          <el-input-number v-model="importForm.displayScale" :min="0.1" :max="10.0" :step="0.1" :precision="2" placeholder="默认 1.00" />
+          <span class="form-hint ml-2">范围 0.1 ~ 10.0，默认 1.00</span>
+        </div>
         <template v-if="importMode === 'zip'">
           <div class="form-row">
             <div class="form-label">.zip</div>
@@ -496,6 +646,50 @@ onBeforeUnmount(() => {
             文件命名规则：atlas 与 skel 的文件名（不含后缀）必须一致，且仅允许字母/数字/_/-（长度≤64）。后端将自动据此生成资源 Key。
           </div>
         </template>
+
+        <!-- 实时预览区域 -->
+        <div v-if="importPreviewSkelUrl" class="preview-panel">
+          <div class="preview-header">角色状态预览</div>
+          <div class="preview-body">
+            <div class="preview-controls">
+              <div class="control-group">
+                <label class="control-label">时装组</label>
+                <el-select v-model="importPreviewSkin" placeholder="默认" size="small" style="width: 100%" clearable>
+                  <el-option v-for="s in importPreviewSkins" :key="s" :label="s" :value="s" />
+                </el-select>
+              </div>
+              <div class="control-group">
+                <label class="control-label">动画</label>
+                <el-select v-model="importSelectedAnimation" placeholder="选择动画" size="small" style="width: 100%">
+                  <el-option v-for="a in importPreviewAnimations" :key="a" :label="a" :value="a" />
+                </el-select>
+              </div>
+              <div class="control-group">
+                <label class="control-label">设为待机动画</label>
+                <el-button size="small" style="width: 100%" :disabled="!importSelectedAnimation" @click="setIdleAnimFromPreview">
+                  使用当前动画
+                </el-button>
+              </div>
+              <div class="control-group">
+                <label class="control-label">设为移动动画</label>
+                <el-button size="small" style="width: 100%" :disabled="!importSelectedAnimation" @click="setMoveAnimFromPreview">
+                  使用当前动画
+                </el-button>
+              </div>
+            </div>
+            <div class="preview-canvas">
+              <SpinePixiPlayer
+                :skel-url="importPreviewSkelUrl"
+                :animation-name="importSelectedAnimation || undefined"
+                :scale="importForm.displayScale || 1.0"
+                :skin-name="importPreviewSkin || undefined"
+                fit="contain"
+                @loaded="onImportPreviewLoaded"
+                @error="onImportPreviewError"
+              />
+            </div>
+          </div>
+        </div>
       </div>
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
@@ -517,8 +711,52 @@ onBeforeUnmount(() => {
             <div class="meta-item"><span class="meta-k">更新时间</span><span class="meta-v">{{ currentDetail.asset.updatedAt }}</span></div>
           </div>
 
+          <!-- 管理页内嵌预览 -->
+          <div v-if="previewSkelUrl" class="detail-preview-panel">
+            <div class="detail-preview-header">角色状态预览</div>
+            <div class="detail-preview-body">
+              <div class="detail-preview-controls">
+                <div class="control-group">
+                  <label class="control-label">时装组</label>
+                  <el-select v-model="detailPreviewSkin" placeholder="默认" size="small" style="width: 100%" clearable>
+                    <el-option v-for="s in detailPreviewSkins" :key="s" :label="s" :value="s" />
+                  </el-select>
+                </div>
+                <div class="control-group">
+                  <label class="control-label">动画</label>
+                  <el-select v-model="selectedAnimation" placeholder="选择动画" size="small" style="width: 100%">
+                    <el-option v-for="a in previewAnimations" :key="a" :label="a" :value="a" />
+                  </el-select>
+                </div>
+                <div class="control-group">
+                  <label class="control-label">设为待机动画</label>
+                  <el-button size="small" style="width: 100%" :disabled="!selectedAnimation" @click="setIdleFromPreview">使用当前动画</el-button>
+                </div>
+                <div class="control-group">
+                  <label class="control-label">设为移动动画</label>
+                  <el-button size="small" style="width: 100%" :disabled="!selectedAnimation" @click="setMoveFromPreview">使用当前动画</el-button>
+                </div>
+              </div>
+              <div class="detail-preview-canvas">
+                <SpinePixiPlayer
+                  :skel-url="previewSkelUrl"
+                  :animation-name="selectedAnimation || undefined"
+                  :scale="detailPreviewScale"
+                  :skin-name="detailPreviewSkin || undefined"
+                  fit="contain"
+                  @loaded="onDetailPreviewLoaded"
+                  @error="onDetailPreviewError"
+                />
+              </div>
+            </div>
+            <div class="detail-preview-scale-row">
+              <label class="control-label" style="width: 80px">显示缩放</label>
+              <el-input-number v-model="detailPreviewScale" :min="0.1" :max="10.0" :step="0.1" :precision="2" size="small" style="width: 140px" />
+              <span class="form-hint ml-2">修改后预览实时缩放</span>
+            </div>
+          </div>
+
           <div class="detail-actions">
-            <el-button type="primary" @click="openPreviewFromDetail">预览</el-button>
             <el-button @click="openEdit">修改</el-button>
             <el-button @click="doDelete(currentDetail.asset.id)">删除</el-button>
           </div>
@@ -568,6 +806,9 @@ onBeforeUnmount(() => {
           <el-radio-group v-model="editForm.type">
             <el-radio-button v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.value">{{ o.label }}</el-radio-button>
           </el-radio-group>
+        </div>
+        <div class="form-hint" style="padding: 8px 0; color: #6b7280;">
+          💡 待机动画、移动动画、显示缩放请在上方预览面板中通过按钮设置，修改后点击保存即可。
         </div>
         <div class="form-row">
           <div class="form-label">更新文件</div>
@@ -706,6 +947,60 @@ onBeforeUnmount(() => {
   color: rgba(15, 23, 42, 0.84);
 }
 
+/* 管理页内嵌预览面板 */
+.detail-preview-panel {
+  margin-top: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  overflow: hidden;
+}
+
+.detail-preview-header {
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  background: rgba(241, 245, 249, 0.8);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.detail-preview-body {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+
+.detail-preview-controls {
+  width: 160px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-preview-canvas {
+  flex: 1;
+  min-height: 240px;
+  max-height: 360px;
+  border-radius: 8px;
+  background: repeating-conic-gradient(#e2e8f0 0% 25%, transparent 0% 50%) 0 0 / 20px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+
+.detail-preview-scale-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.ml-2 {
+  margin-left: 8px;
+}
+
 .detail-actions {
   display: flex;
   gap: 10px;
@@ -779,5 +1074,59 @@ onBeforeUnmount(() => {
 
 .drag-player {
   flex: 1;
+}
+
+/* 导入预览面板 */
+.preview-panel {
+  margin-top: 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+  overflow: hidden;
+}
+
+.preview-header {
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  background: rgba(241, 245, 249, 0.8);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.preview-body {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+}
+
+.preview-controls {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.control-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.7);
+}
+
+.preview-canvas {
+  flex: 1;
+  min-height: 280px;
+  max-height: 400px;
+  border-radius: 8px;
+  background: repeating-conic-gradient(#e2e8f0 0% 25%, transparent 0% 50%) 0 0 / 20px 20px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  overflow: hidden;
 }
 </style>

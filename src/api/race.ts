@@ -19,6 +19,9 @@ export interface RaceParticipantInfo {
   assetKey: string
   name: string
   type: number
+  idleAnimation: string | null
+  moveAnimation: string | null
+  displayScale: number | null
 }
 
 export interface RaceRoundInfo {
@@ -34,10 +37,11 @@ export interface RaceRoundInfo {
   betCount: number
   paidTotal: number
   ranking: number[] | null
+  developerControlled: boolean
 }
 
 export interface RaceMyBetInfo {
-  participantId: number
+  assetId: number
   amount: number
 }
 
@@ -50,6 +54,8 @@ export interface RaceStateResponse {
   myTotal: number
   minTotalBet: number
   maxTotalBet: number
+  /** 各参赛对象实时彩池（assetId 字符串键 → 金额），不含已退款注单 */
+  horsePools: Record<string, number>
   serverTs: number
 }
 
@@ -68,7 +74,7 @@ export async function getRaceState(roomId: string): Promise<RaceStateResponse> {
 
 export async function placeRaceBet(body: {
   roomId: string
-  participantId: number
+  assetId: number
   amount: number
 }): Promise<RaceBetResult> {
   return unwrap<RaceBetResult>({ url: '/user/online/race/bet', method: 'POST', data: body })
@@ -99,6 +105,7 @@ export interface RaceAdminDetail {
   race: RaceBrief
   participants: RaceParticipantInfo[]
   rounds: RaceRoundInfo[]
+  roundParticipants: Record<number, RaceParticipantInfo[]>
 }
 
 export interface RaceVerifyResult {
@@ -110,6 +117,60 @@ export interface RaceAdminRow {
   race: RaceBrief
   round: RaceRoundInfo | null
   participantCount: number
+}
+
+export interface RaceDeveloperState {
+  race: RaceBrief
+  round: RaceRoundInfo | null
+  participants: RaceParticipantInfo[]
+  nextParticipants: RaceParticipantInfo[]
+  plannedRanking: number[] | null
+  canScheduleNext: boolean
+}
+
+export async function getRaceDeveloperState(id: number): Promise<RaceDeveloperState> {
+  return unwrap<RaceDeveloperState>({
+    url: `/admin/online/race/${id}/developer`,
+    method: 'GET'
+  })
+}
+
+export async function startRaceDeveloperRound(id: number, roundId: number): Promise<boolean> {
+  return unwrap<boolean>({
+    url: `/admin/online/race/${id}/developer/start`,
+    method: 'POST',
+    data: { roundId }
+  })
+}
+
+export async function setRaceDeveloperRanking(
+  id: number,
+  body: { roundId: number; participantIds: number[] }
+): Promise<boolean> {
+  return unwrap<boolean>({
+    url: `/admin/online/race/${id}/developer/ranking`,
+    method: 'POST',
+    data: body
+  })
+}
+
+export async function setRaceDeveloperNextParticipants(
+  id: number,
+  body: { roundId: number; assetIds: number[] }
+): Promise<boolean> {
+  return unwrap<boolean>({
+    url: `/admin/online/race/${id}/developer/next-participants`,
+    method: 'POST',
+    data: body
+  })
+}
+
+export async function endRaceDeveloperRound(id: number, roundId: number, expectedStatus: string): Promise<boolean> {
+  return unwrap<boolean>({
+    url: `/admin/online/race/${id}/developer/end`,
+    method: 'POST',
+    data: { roundId, expectedStatus }
+  })
 }
 
 export async function getRaceCatalog(): Promise<RaceAssetOption[]> {
