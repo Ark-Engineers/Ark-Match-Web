@@ -66,7 +66,7 @@ type SnapshotMsg = {
   players: SnapshotPlayer[]
 }
 
-type CtrlPongMsg = { type: 'pong'; ts: number; serverTs?: number }
+type CtrlPongMsg = { type: 'pong'; ts: number; serverTs?: number; src?: string }
 
 type RaceWsMsg =
   | { type: 'race_update' }
@@ -146,6 +146,10 @@ let worldH = 1080
 let tickHz = 30
 
 let serverClockOffsetMs = 0
+let lastMainPongAt = 0
+let mainPongSupported = false
+let mainPingTimer: number | null = null
+let watchdogTimer: number | null = null
 
 const fps = ref(0)
 const ping = ref<number | null>(null)
@@ -763,6 +767,22 @@ function startFpsPing(): void {
     const now = performance.now()
     wsSendCtrl({ type: 'ping', ts: now })
   }, 1000)
+  mainPingTimer = window.setInterval(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    const now = performance.now()
+    wsSend({ type: 'ping', ts: now, src: 'main' })
+  }, 10000)
+  watchdogTimer = window.setInterval(() => {
+    // 仅在服务端确认支持主连接 pong 后启用，避免旧后端被误判断线而反复重连
+    if (mainPongSupported && socket && socket.readyState === WebSocket.OPEN) {
+      if (Date.now() - lastMainPongAt > 30000) {
+        connectionLost.value = true
+        try {
+          socket.close()
+        } catch {}
+      }
+    }
+  }, 5000)
   netTimer = window.setInterval(() => {
     netUp.value = Math.max(0, Math.round(sentBytes / 1024))
     netDown.value = Math.max(0, Math.round(recvBytes / 1024))
@@ -779,6 +799,14 @@ function stopFpsPing(): void {
   if (pingTimer) {
     clearInterval(pingTimer)
     pingTimer = null
+  }
+  if (mainPingTimer) {
+    clearInterval(mainPingTimer)
+    mainPingTimer = null
+  }
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
   }
   if (netTimer) {
     clearInterval(netTimer)
@@ -874,6 +902,10 @@ function handleMsg(m: WsMsg): void {
       const offset = Number(m.serverTs) - Date.now()
       serverClockOffsetMs = serverClockOffsetMs * 0.9 + offset * 0.1
     }
+    if (m.src === 'main') {
+      lastMainPongAt = Date.now()
+      mainPongSupported = true
+    }
     return
   }
   if (m.type === 'race_update') {
@@ -922,6 +954,7 @@ function handleMsg(m: WsMsg): void {
         }
       }
     }
+    void refreshRaceState()
     raceSceneRef.value?.onRaceMsg(m)
     return
   }
@@ -1154,6 +1187,8 @@ async function connect(): Promise<void> {
       if (destroyed) return
       reconnectAttempt.value = 0
       connectionLost.value = false
+      lastMainPongAt = Date.now()
+      mainPongSupported = false
       const joinAssetKey = String(selectedAssetKey.value || assetKey.value || '').trim()
       const join: any = { type: 'join', roomId: roomId.value, assetKey: joinAssetKey, nickname: myNickname }
       const pw = String(sessionStorage.getItem(`online_room_pw_${roomId.value}`) || '').trim()
@@ -1164,6 +1199,8 @@ async function connect(): Promise<void> {
       }
       wsSend(join)
       startFpsPing()
+      // 重连期间可能错过赛马广播，立即同步一次当前状态
+      void refreshRaceState()
     }
     socket.onmessage = (ev) => {
       try {

@@ -28,6 +28,11 @@ export interface RaceParticipantInfo {
   idleAnimation: string | null
   moveAnimation: string | null
   displayScale: number | null
+  raceCount: number
+  firstPlaceCount: number
+  secondPlaceCount: number
+  thirdPlaceCount: number
+  unplacedCount: number
 }
 
 export interface RaceRoundInfo extends RaceDurations {
@@ -51,6 +56,22 @@ export interface RaceMyBetInfo {
   amount: number
 }
 
+export interface RaceMyResultWin {
+  assetId: number
+  participantName: string
+  rankNo: number
+  payout: number
+}
+
+/** 当前轮次个人结算信息（HTTP 状态接口兜底恢复，弥补 WS 个人消息丢失） */
+export interface RaceMyResult {
+  roundId: number
+  roundNo: number
+  payout: number
+  betTotal: number
+  wins: RaceMyResultWin[]
+}
+
 export interface RaceStateResponse {
   exists: boolean
   race: RaceBrief | null
@@ -58,6 +79,7 @@ export interface RaceStateResponse {
   participants: RaceParticipantInfo[]
   myBets: RaceMyBetInfo[]
   myTotal: number
+  myResult: RaceMyResult | null
   minTotalBet: number
   maxTotalBet: number
   /** 各参赛对象实时彩池（assetId 字符串键 → 金额），不含已退款注单 */

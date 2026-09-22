@@ -12,11 +12,14 @@ const props = withDefaults(
     fit?: 'contain' | 'cover'
     scale?: number
     skinName?: string
+    /** 渲染帧率上限（0 表示不限制），用于多个实例并存时降低整体开销 */
+    maxFps?: number
   }>(),
   {
     loop: true,
     fit: 'contain',
     scale: 1.0,
+    maxFps: 0,
   },
 )
 
@@ -114,6 +117,7 @@ async function load(sk: string): Promise<void> {
     antialias: true,
     resizeTo: el,
   })
+  if (props.maxFps > 0) app.ticker.maxFPS = props.maxFps
   el.appendChild(app.view as any)
 
   try {

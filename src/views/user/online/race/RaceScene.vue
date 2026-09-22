@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import 'pixi-spine'
 import * as PIXI from 'pixi.js'
 import { Spine } from 'pixi-spine'
@@ -17,6 +17,7 @@ import { API_BASE_URL } from '@/config'
 import { useAuthStore } from '@/stores/auth'
 import { TOTAL_TICKS, TRACK_LENGTH, buildProfiles, finishOrder } from '@/utils/raceSim'
 import RaceDeveloperConsole from '@/views/admin/race/RaceDeveloperConsole.vue'
+import SpinePixiPlayer from '@/components/SpinePixiPlayer.vue'
 
 const auth = useAuthStore()
 
@@ -66,6 +67,7 @@ const st = ref<RaceStateResponse>(
     participants: [],
     myBets: [],
     myTotal: 0,
+    myResult: null,
     minTotalBet: 100,
     maxTotalBet: 3000,
     horsePools: {},
@@ -75,7 +77,6 @@ const st = ref<RaceStateResponse>(
 
 const balance = ref<number | null>(null)
 const nowMs = ref(Date.now())
-const amounts = reactive<Record<number, number>>({})
 const bettingPid = ref<number | null>(null)
 const myResult = ref<{
   roundId: number
@@ -85,6 +86,10 @@ const myResult = ref<{
   wins: Array<{ assetId: number; participantName: string; rankNo: number; payout: number }>
 } | null>(null)
 
+const betDialogVisible = ref(false)
+const betDialogPid = ref<number | null>(null)
+const betDialogAmount = ref(100)
+
 let profiles: number[][] | null = null
 let finishLanes: number[] = []
 let profileSeed: string | null = null
@@ -93,6 +98,7 @@ let stateRequest = 0
 let disposed = false
 let tickRaceLogged = false
 let clockTimer: number | null = null
+let statePollTimer: number | null = null
 
 // 参赛者动画配置缓存：pid -> { idleAnim, moveAnim, displayScale }
 const participantAnimConfig = new Map<number, { idleAnim: string; moveAnim: string; displayScale: number }>()
@@ -210,7 +216,6 @@ async function refreshState(): Promise<void> {
       profileSeed = null
       tickRaceLogged = false
       myResult.value = null
-      for (const key of Object.keys(amounts)) delete amounts[Number(key)]
       for (const rs of podiumSprites.values()) {
         rs.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
         rs.label.destroy()
@@ -223,13 +228,30 @@ async function refreshState(): Promise<void> {
       emit('exit')
       return
     }
+    // 个人结算兜底：WS race_my_result 可能因背压被丢弃，HTTP 状态响应里带上 myResult 即可恢复
+    if (s.myResult && s.myResult.roundId === s.round?.id) {
+      myResult.value = {
+        roundId: s.myResult.roundId,
+        roundNo: s.myResult.roundNo,
+        payout: s.myResult.payout,
+        betTotal: s.myResult.betTotal,
+        wins: (s.myResult.wins || []).map((w) => ({
+          assetId: Number(w.assetId || 0),
+          participantName: String(w.participantName || ''),
+          rankNo: Number(w.rankNo || 0),
+          payout: Number(w.payout || 0)
+        }))
+      }
+    }
     try {
       await ensureRacers()
     } catch (e) {
       console.warn('加载参赛者资源失败:', e)
     }
     applyRoundState()
-  } catch {}
+  } catch (e) {
+    console.warn('[RaceScene] 刷新赛马状态失败:', e)
+  }
 }
 
 function applyRoundState(): void {
@@ -241,6 +263,7 @@ function applyRoundState(): void {
     return
   }
   if (podiumGfx) podiumGfx.visible = r.status === 'PODIUM'
+  if (trackGfx) trackGfx.visible = r.status !== 'BETTING'
   if (r.status !== 'PODIUM') {
     for (const rs of podiumSprites.values()) {
       rs.spine.visible = false
@@ -254,11 +277,16 @@ function applyRoundState(): void {
     }
     profileSeed = r.seed
     raceStartAtMs = r.raceStartAt
+    // 确保赛道上的选手立即可见（不依赖 tick 函数）
+    for (const rs of racers.values()) {
+      rs.spine.visible = true
+      rs.label.visible = true
+    }
   } else if (r.status === 'BETTING') {
     profiles = null
     profileSeed = null
     raceStartAtMs = 0
-    positionRacersAtStart()
+    hideAllRacers()
   } else if (r.status === 'PODIUM') {
     profiles = null
     layoutPodium()
@@ -281,20 +309,38 @@ function handleRaceMsg(m: any): void {
   }
   if (type === 'race_start' || type === 'race_result') {
     const r = round.value
-    if (type === 'race_start' && r && Number(m.roundId) === r.id) {
-      const durationSeconds = Number(m.durationMs) / 1000
-      st.value = {
-        ...st.value,
-        round: {
-          ...r,
-          status: 'RACING',
-          seed: String(m.seed || ''),
-          raceStartAt: Number(m.raceStartAt || 0),
-          raceDurationSeconds: Number.isInteger(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 86400
-            ? durationSeconds : r.raceDurationSeconds
+    if (r && Number(m.roundId) === r.id) {
+      if (type === 'race_start') {
+        const durationSeconds = Number(m.durationMs) / 1000
+        st.value = {
+          ...st.value,
+          round: {
+            ...r,
+            status: 'RACING',
+            seed: String(m.seed || ''),
+            raceStartAt: Number(m.raceStartAt || 0),
+            raceDurationSeconds: Number.isInteger(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 86400
+              ? durationSeconds : r.raceDurationSeconds
+          }
+        }
+      } else {
+        // 直接用 WS 消息里的权威名次进入颁奖阶段：颁奖窗口只有几十秒，
+        // 若仅依赖 HTTP 刷新（轮询间隔/请求失败）会导致本场结果与颁奖台空白
+        st.value = {
+          ...st.value,
+          round: {
+            ...r,
+            status: 'PODIUM',
+            ranking: Array.isArray(m.ranking) ? m.ranking.map(Number) : r.ranking,
+            totalPool: Number(m.totalPool || 0),
+            paidTotal: Number(m.paidTotal || 0),
+            podiumEndAt: Number(m.podiumEndAt || r.podiumEndAt || 0)
+          }
         }
       }
       applyRoundState()
+      void refreshState()
+      return
     }
     void refreshState()
     return
@@ -332,15 +378,6 @@ async function refreshBalance(): Promise<void> {
   } catch {}
 }
 
-function amountFor(pid: number): number {
-  const v = Number(amounts[pid] || 0)
-  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0
-}
-
-function setAmount(pid: number, v: number): void {
-  amounts[pid] = Math.max(0, Math.floor(v))
-}
-
 function canBetPid(p: RaceParticipantInfo): { ok: boolean; reason: string } {
   if (!bettingOpen.value) return { ok: false, reason: '当前阶段不可下注' }
   const mine = myBetByPid.value.get(p.id) ?? 0
@@ -348,7 +385,15 @@ function canBetPid(p: RaceParticipantInfo): { ok: boolean; reason: string } {
   return { ok: true, reason: '' }
 }
 
-async function bet(pid: number): Promise<void> {
+function mergeBets(bets: RaceMyBetInfo[], pid: number, amt: number): RaceMyBetInfo[] {
+  const out = bets.map((b) => ({ ...b }))
+  const hit = out.find((b) => b.assetId === pid)
+  if (hit) hit.amount += amt
+  else out.push({ assetId: pid, amount: amt })
+  return out
+}
+
+function openBetDialog(pid: number): void {
   const p = st.value.participants.find((x) => x.id === pid)
   if (!p) return
   const check = canBetPid(p)
@@ -356,16 +401,20 @@ async function bet(pid: number): Promise<void> {
     ElMessage.warning(check.reason)
     return
   }
-  const amt = amountFor(pid)
+  betDialogPid.value = pid
+  betDialogAmount.value = 100
+  betDialogVisible.value = true
+}
+
+async function confirmBet(): Promise<void> {
+  if (betDialogPid.value === null) return
+  const amt = Math.max(0, Math.floor(betDialogAmount.value))
   if (amt < 1) {
     ElMessage.warning('请输入下注金额')
     return
   }
-  if (myTotal.value + amt > st.value.maxTotalBet) {
-    ElMessage.warning(`单场总额不能超过 ${st.value.maxTotalBet} 龙门币`)
-    return
-  }
-  if (bettingPid.value !== null) return
+  const pid = betDialogPid.value
+  betDialogVisible.value = false
   bettingPid.value = pid
   try {
     const res = await placeRaceBet({ roomId: props.roomId, assetId: pid, amount: amt })
@@ -378,22 +427,19 @@ async function bet(pid: number): Promise<void> {
         myBets: mergeBets(st.value.myBets, pid, amt)
       }
     }
-    setAmount(pid, 0)
     void refreshBalance()
     ElMessage.success('下注成功')
   } catch (e: any) {
     ElMessage.error(String(e?.message || '下注失败'))
   } finally {
     bettingPid.value = null
+    betDialogPid.value = null
   }
 }
 
-function mergeBets(bets: RaceMyBetInfo[], pid: number, amt: number): RaceMyBetInfo[] {
-  const out = bets.map((b) => ({ ...b }))
-  const hit = out.find((b) => b.assetId === pid)
-  if (hit) hit.amount += amt
-  else out.push({ assetId: pid, amount: amt })
-  return out
+function statPercent(count: number, total: number): string {
+  if (!total) return '0%'
+  return `${Math.round((count / total) * 100)}%`
 }
 
 // ---------- Pixi ----------
@@ -455,12 +501,6 @@ function racerPose(pid: number, x: number): void {
   rs.spine.y = laneCenterY - rs.centerY * rs.scale
   rs.label.x = x
   rs.label.y = laneY(rs.lane) + 6
-}
-
-function positionRacersAtStart(): void {
-  for (const rs of racers.values()) {
-    racerPose(rs.pid, START_X + 40)
-  }
 }
 
 function hideAllRacers(): void {
@@ -793,11 +833,9 @@ function tickRace(): void {
     }
   } else if (status.value === 'BETTING') {
     for (const rs of racers.values()) {
-      setRacerAnimation(rs.spine, false, rs.pid) // 切回 Idle
-      rs.spine.visible = true
-      rs.label.visible = true
-      const name = st.value.participants.find(p => p.id === rs.pid)?.name || ''
-      rs.label.text = name
+      setRacerAnimation(rs.spine, false, rs.pid)
+      rs.spine.visible = false
+      rs.label.visible = false
     }
     for (const rs of podiumSprites.values()) {
       rs.spine.visible = false
@@ -886,6 +924,10 @@ onMounted(() => {
   initPixi()
   void refreshState()
   void refreshBalance()
+  // 兜底轮询：WS 广播丢失/背压丢弃时，页面也能在几秒内自动切到正确阶段（开赛/颁奖/下一场）
+  statePollTimer = window.setInterval(() => {
+    void refreshState()
+  }, 5000)
 })
 
 onBeforeUnmount(() => {
@@ -894,6 +936,10 @@ onBeforeUnmount(() => {
   if (clockTimer) {
     clearInterval(clockTimer)
     clockTimer = null
+  }
+  if (statePollTimer) {
+    clearInterval(statePollTimer)
+    statePollTimer = null
   }
   destroyPixi()
 })
@@ -959,75 +1005,142 @@ onBeforeUnmount(() => {
       <div class="absolute left-1/2 top-3 -translate-x-1/2 px-4 py-1.5 rounded-full bg-black/55 border border-white/10 text-gray-100 text-sm backdrop-blur-sm">
         {{ countdownText }}
       </div>
-      <!-- 下注面板（竞猜阶段显示） -->
+      <!-- 竞猜面板（竞猜阶段显示） -->
       <div
         v-if="status === 'BETTING' && !round?.developerControlled"
-        class="absolute left-3 bottom-3 w-[420px] max-w-[calc(100%-24px)] rounded-xl bg-black/60 border border-white/10 backdrop-blur-md p-3 text-gray-100"
+        class="absolute inset-x-3 bottom-3 rounded-xl bg-black/60 border border-white/10 backdrop-blur-md p-3 text-gray-100"
       >
-        <div class="flex items-center justify-between text-xs text-gray-300">
+        <div class="flex items-center justify-between text-xs text-gray-300 mb-2">
           <div>
             我的下注 <span class="font-bold text-amber-300">{{ myTotal.toLocaleString() }}</span>
             <span class="text-gray-500"> / {{ st.minTotalBet }}-{{ st.maxTotalBet }} 龙门币</span>
           </div>
           <div>截止 {{ round ? fmtTime(round.betEndAt) : '-' }}</div>
         </div>
-        <div class="mt-1 text-[10px] text-gray-500">
-          前三名均中奖 · 名次奖金 = 奖池÷3 ×（冠军100% / 亚军80% / 季军60%，剩余20%不发放）· 赔率为冠军档估算 · 前三名全无人押中则无人中奖
+        <div class="text-[10px] text-gray-500 mb-2">
+          前三名均中奖 · 名次奖金 = 奖池÷3 ×（冠军100% / 亚军80% / 季军60%，剩余20%不发放）· 赔率为冠军档估算
         </div>
-        <div class="mt-2 flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
-          <div v-for="p in st.participants" :key="p.id" class="flex items-center gap-2">
-            <span class="w-4 text-xs text-gray-500">{{ p.sortNo }}</span>
-            <span class="flex-1 text-sm truncate">{{ p.name || p.assetKey }}</span>
-            <span
-              class="px-1.5 py-0.5 rounded text-[10px] border"
-              :class="p.type === 3 ? 'bg-purple-500/15 border-purple-400/40 text-purple-300' : 'bg-red-500/15 border-red-400/40 text-red-300'"
-            >
-              {{ p.type === 3 ? 'BOSS' : '敌人' }}
-            </span>
-            <span
-              class="w-12 text-right text-xs tabular-nums"
+        <div class="flex gap-2 justify-center">
+          <div
+            v-for="p in st.participants"
+            :key="p.id"
+            class="flex-1 max-w-[200px] rounded-lg bg-white/5 border border-white/10 p-2 flex flex-col items-center"
+          >
+            <div class="w-full h-[120px] mb-1">
+              <SpinePixiPlayer
+                :skel-url="apiUrl(`/assets/spine/${p.assetKey}/${p.assetKey}.skel`)"
+                :animation-name="p.idleAnimation || 'Idle'"
+                :scale="p.displayScale || 1.0"
+                fit="contain"
+                :max-fps="30"
+              />
+            </div>
+            <div class="text-sm font-semibold truncate w-full text-center">{{ p.name || p.assetKey }}</div>
+            <div
+              class="mt-1 text-xs tabular-nums"
               :class="oddsFor(p.id) === null ? 'text-gray-600' : 'text-amber-300'"
-              :title="oddsFor(p.id) === null ? '暂无人押注' : '冠军档估算赔率，随彩池实时变化'"
             >
               {{ oddsFor(p.id) === null ? '—' : `@${fmtOdds(oddsFor(p.id))}` }}
-            </span>
-            <span class="text-xs text-gray-500 w-16 text-right">
+            </div>
+            <div class="text-[10px] text-gray-500 mt-0.5">
               已投 {{ (myBetByPid.get(p.id) ?? 0).toLocaleString() }}
-            </span>
-            <div class="flex items-center gap-1">
+            </div>
+            <button
+              class="mt-2 w-full h-7 rounded bg-amber-500/80 hover:bg-amber-400 text-black text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="!canBetPid(p).ok || bettingPid !== null"
+              :title="canBetPid(p).reason"
+              @click="openBetDialog(p.id)"
+            >
+              下注
+            </button>
+            <div class="mt-2 w-full text-[10px] text-gray-400 space-y-0.5">
+              <div class="flex justify-between">
+                <span>参赛</span>
+                <span class="text-gray-300 tabular-nums">{{ p.raceCount ?? 0 }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-amber-400">第1名</span>
+                <span class="text-amber-300 tabular-nums">{{ statPercent(p.firstPlaceCount ?? 0, p.raceCount ?? 0) }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-blue-400">第2名</span>
+                <span class="text-blue-300 tabular-nums">{{ statPercent(p.secondPlaceCount ?? 0, p.raceCount ?? 0) }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-emerald-400">第3名</span>
+                <span class="text-emerald-300 tabular-nums">{{ statPercent(p.thirdPlaceCount ?? 0, p.raceCount ?? 0) }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>第4-5名</span>
+                <span class="text-gray-300 tabular-nums">{{ statPercent(p.unplacedCount ?? 0, p.raceCount ?? 0) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- 下注弹窗 -->
+      <teleport to="body">
+        <div
+          v-if="betDialogVisible && betDialogPid !== null"
+          class="fixed inset-0 z-[9999] flex items-center justify-center"
+        >
+          <div class="absolute inset-0 bg-black/60" @click="betDialogVisible = false"></div>
+          <div class="relative w-[340px] rounded-xl bg-[#1a2332] border border-white/15 p-5 text-gray-100 shadow-2xl">
+            <div class="text-base font-semibold mb-4">
+              下注 · {{ st.participants.find(p => p.id === betDialogPid)?.name || '' }}
+            </div>
+            <div class="text-xs text-gray-400 mb-3">
+              已投 {{ (myBetByPid.get(betDialogPid!) ?? 0).toLocaleString() }} 龙门币
+              · 总额上限 {{ st.maxTotalBet }}
+            </div>
+            <div class="flex items-center gap-2 mb-3">
               <button
-                class="h-6 w-6 rounded bg-white/5 hover:bg-white/15 border border-white/10 text-gray-200 cursor-pointer text-xs"
-                @click="setAmount(p.id, amountFor(p.id) - 100)"
+                class="h-8 w-8 rounded bg-white/5 hover:bg-white/15 border border-white/10 text-gray-200 cursor-pointer text-sm"
+                @click="betDialogAmount = Math.max(0, betDialogAmount - 100)"
               >
                 -100
               </button>
               <input
-                :value="amountFor(p.id) || ''"
+                v-model.number="betDialogAmount"
                 type="number"
                 min="0"
                 step="100"
-                placeholder="0"
-                class="h-6 w-20 px-1 rounded bg-white/5 border border-white/10 text-gray-100 text-xs outline-none focus:border-amber-400/60"
-                @input="setAmount(p.id, Number(($event.target as HTMLInputElement).value || 0))"
+                class="flex-1 h-8 px-2 rounded bg-white/5 border border-white/10 text-gray-100 text-sm outline-none focus:border-amber-400/60 text-center tabular-nums"
               />
               <button
-                class="h-6 w-6 rounded bg-white/5 hover:bg-white/15 border border-white/10 text-gray-200 cursor-pointer text-xs"
-                @click="setAmount(p.id, amountFor(p.id) + 100)"
+                class="h-8 w-8 rounded bg-white/5 hover:bg-white/15 border border-white/10 text-gray-200 cursor-pointer text-sm"
+                @click="betDialogAmount = betDialogAmount + 100"
               >
                 +100
               </button>
             </div>
-            <button
-              class="h-6 px-3 rounded bg-amber-500/80 hover:bg-amber-400 text-black text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              :disabled="!canBetPid(p).ok || bettingPid === p.id"
-              :title="canBetPid(p).reason"
-              @click="bet(p.id)"
-            >
-              下注
-            </button>
+            <div class="flex gap-2 mb-4">
+              <button
+                v-for="v in [100, 500, 1000]"
+                :key="v"
+                class="flex-1 h-7 rounded bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 cursor-pointer text-xs"
+                @click="betDialogAmount = v"
+              >
+                {{ v }}
+              </button>
+            </div>
+            <div class="flex gap-2">
+              <button
+                class="flex-1 h-9 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer text-sm"
+                @click="betDialogVisible = false"
+              >
+                取消
+              </button>
+              <button
+                class="flex-1 h-9 rounded-lg bg-amber-500/80 hover:bg-amber-400 text-black font-semibold cursor-pointer text-sm"
+                @click="confirmBet"
+              >
+                确认下注
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      </teleport>
       <!-- 领奖台信息（颁奖阶段显示） -->
       <div
         v-if="status === 'PODIUM'"

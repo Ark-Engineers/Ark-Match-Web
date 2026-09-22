@@ -1264,7 +1264,7 @@ onBeforeUnmount(() => {
                 :min="lmdForm.mode === 'set' ? 0 : 1"
                 :max="lmdForm.mode === 'set' ? Number.MAX_SAFE_INTEGER : 10_000_000"
                 :precision="0"
-                :step="100"
+                :step="1"
                 controls-position="right"
                 placeholder="整数龙门币"
                 style="width: 100%; max-width: 320px"

@@ -18,6 +18,11 @@ type SpineAssetItem = {
   idleAnimation: string | null
   moveAnimation: string | null
   displayScale: number | null
+  raceCount: number
+  firstPlaceCount: number
+  secondPlaceCount: number
+  thirdPlaceCount: number
+  unplacedCount: number
   createdBy: number
   updatedBy: number
   createdAt: string
@@ -560,6 +565,27 @@ onBeforeUnmount(() => {
           <template #default="{ row }">
             <el-tag :type="typeTagType(row.type)" size="small">{{ typeLabel(row.type) }}</el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="参赛" width="70" align="right">
+          <template #default="{ row }">{{ row.raceCount ?? 0 }}</template>
+        </el-table-column>
+        <el-table-column label="第1名" width="70" align="right">
+          <template #default="{ row }">
+            <span style="color: var(--el-color-warning)">{{ row.firstPlaceCount ?? 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="第2名" width="70" align="right">
+          <template #default="{ row }">
+            <span style="color: var(--el-color-primary)">{{ row.secondPlaceCount ?? 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="第3名" width="70" align="right">
+          <template #default="{ row }">
+            <span style="color: var(--el-color-success)">{{ row.thirdPlaceCount ?? 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="未上榜" width="70" align="right">
+          <template #default="{ row }">{{ row.unplacedCount ?? 0 }}</template>
         </el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="180" />
         <el-table-column label="操作" width="320" fixed="right">
