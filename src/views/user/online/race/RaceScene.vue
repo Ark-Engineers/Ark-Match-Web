@@ -15,7 +15,7 @@ import {
 import { getLmdBalance } from '@/api/lmd'
 import { API_BASE_URL } from '@/config'
 import { useAuthStore } from '@/stores/auth'
-import { TICK_MS, TOTAL_TICKS, TRACK_LENGTH, buildProfiles } from '@/utils/raceSim'
+import { TOTAL_TICKS, TRACK_LENGTH, buildProfiles, finishOrder } from '@/utils/raceSim'
 import RaceDeveloperConsole from '@/views/admin/race/RaceDeveloperConsole.vue'
 
 const auth = useAuthStore()
@@ -83,10 +83,10 @@ const myResult = ref<{
   payout: number
   betTotal: number
   wins: Array<{ assetId: number; participantName: string; rankNo: number; payout: number }>
-  refunded: boolean
 } | null>(null)
 
 let profiles: number[][] | null = null
+let finishLanes: number[] = []
 let profileSeed: string | null = null
 let raceStartAtMs = 0
 let stateRequest = 0
@@ -107,7 +107,7 @@ const myBetByPid = computed(() => {
   return m
 })
 
-// 位置彩池：前三名均中奖，赔率 = (奖池/3) / 该对象彩池；无人押注显示 '—'
+// 位置彩池：前三名均中奖，名次奖金 = 奖池/3 ×（冠军100%/亚军80%/季军60%），剩余20%不发放；赔率为冠军档估算；无人押注显示 '—'
 function horsePoolFor(pid: number): number {
   const hp = st.value.horsePools
   return hp ? Number(hp[String(pid)] ?? 0) : 0
@@ -123,13 +123,12 @@ function fmtOdds(odds: number | null): string {
   return odds === null ? '—' : odds.toFixed(2)
 }
 
-const refundNotice = computed(() => {
+const noWinnerNotice = computed(() => {
   const r = round.value
   return (
     !!r && r.status === 'PODIUM' && (r.betCount ?? 0) > 0 && (r.totalPool ?? 0) > 0 && (r.paidTotal ?? 0) === 0
   )
 })
-
 const bettingOpen = computed(() => {
   const r = round.value
   if (!r || r.status !== 'BETTING' || r.developerControlled) return false
@@ -149,7 +148,7 @@ const countdownText = computed(() => {
   }
   if (s === 'RACING') {
     if (nowMs.value < r.raceStartAt) return `准备开赛… ${fmtCountdown(r.raceStartAt - nowMs.value)}`
-    const left = (r.raceStartAt ?? 0) + 60_000 - nowMs.value
+    const left = r.raceStartAt + r.raceDurationSeconds * 1000 - nowMs.value
     return `比赛中… 距结算 ${fmtCountdown(Math.max(0, left))}`
   }
   if (s === 'PODIUM') {
@@ -249,7 +248,10 @@ function applyRoundState(): void {
     }
   }
   if (r.status === 'RACING' && r.seed) {
-    if (!profiles || profileSeed !== r.seed) profiles = buildProfiles(r.seed)
+    if (!profiles || profileSeed !== r.seed) {
+      profiles = buildProfiles(r.seed)
+      finishLanes = finishOrder(profiles)
+    }
     profileSeed = r.seed
     raceStartAtMs = r.raceStartAt
   } else if (r.status === 'BETTING') {
@@ -278,6 +280,22 @@ function handleRaceMsg(m: any): void {
     return
   }
   if (type === 'race_start' || type === 'race_result') {
+    const r = round.value
+    if (type === 'race_start' && r && Number(m.roundId) === r.id) {
+      const durationSeconds = Number(m.durationMs) / 1000
+      st.value = {
+        ...st.value,
+        round: {
+          ...r,
+          status: 'RACING',
+          seed: String(m.seed || ''),
+          raceStartAt: Number(m.raceStartAt || 0),
+          raceDurationSeconds: Number.isInteger(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 86400
+            ? durationSeconds : r.raceDurationSeconds
+        }
+      }
+      applyRoundState()
+    }
     void refreshState()
     return
   }
@@ -295,12 +313,9 @@ function handleRaceMsg(m: any): void {
       roundNo: Number(m.roundNo || 0),
       payout: Number(m.payout || 0),
       betTotal: Number(m.betTotal || 0),
-      wins,
-      refunded: Boolean(m.refunded)
+      wins
     }
-    if (myResult.value.refunded) {
-      ElMessage.info('前三名无人押中，本场奖池已全额退款')
-    } else if (myResult.value.payout > 0) {
+    if (myResult.value.payout > 0) {
       ElMessage.success(`恭喜！本场赛马竞猜获得 ${myResult.value.payout} 龙门币`)
     } else {
       ElMessage.info('本场赛马竞猜未中奖，再接再厉！')
@@ -722,9 +737,14 @@ function tickRace(): void {
     updateViewport()
   }
   const serverNow = props.getServerNow()
-  if (status.value === 'RACING' && profiles && raceStartAtMs) {
+  const r = round.value
+  if (r?.status === 'RACING' && profiles && raceStartAtMs) {
     const elapsed = serverNow - raceStartAtMs
-    const idx = clamp(Math.floor(elapsed / TICK_MS), 0, TOTAL_TICKS)
+    // 插值仅平滑显示，冲线仍落在原始模拟 tick 上。
+    const progress = clamp(elapsed / (r.raceDurationSeconds * 1000), 0, 1)
+    const tick = progress * TOTAL_TICKS
+    const idx = Math.floor(tick)
+    const fraction = tick - idx
     
     // 调试日志：检查中途进入时的时间计算
     if (!tickRaceLogged) {
@@ -735,7 +755,10 @@ function tickRace(): void {
     // 计算每个参赛者的当前位置和排名
     const positions: Array<{ pid: number; pos: number; lane: number }> = []
     for (const rs of racers.values()) {
-      const pos = Math.min(TRACK_LENGTH, profiles[Math.min(4, Math.max(0, rs.lane))]?.[idx] ?? 0)
+      const curve = profiles[Math.min(4, Math.max(0, rs.lane))]
+      const from = clamp(curve?.[idx] ?? 0, 0, TRACK_LENGTH)
+      const to = clamp(curve?.[Math.min(TOTAL_TICKS, idx + 1)] ?? 0, 0, TRACK_LENGTH)
+      const pos = from + (to - from) * fraction
       const x = START_X + (pos / TRACK_LENGTH) * (FINISH_X - START_X)
       
       // 根据进度决定是否播放跑步动画
@@ -747,8 +770,12 @@ function tickRace(): void {
       positions.push({ pid: rs.pid, pos, lane: rs.lane })
     }
     
-    // 按位置排序计算实时名次
-    positions.sort((a, b) => b.pos - a.pos || a.lane - b.lane)
+    positions.sort((a, b) => {
+      if (idx === TOTAL_TICKS || (a.pos >= TRACK_LENGTH && b.pos >= TRACK_LENGTH)) {
+        return finishLanes.indexOf(a.lane) - finishLanes.indexOf(b.lane)
+      }
+      return b.pos - a.pos || a.lane - b.lane
+    })
     const rankMap = new Map<number, number>()
     positions.forEach((p, i) => rankMap.set(p.pid, i + 1))
     
@@ -945,7 +972,7 @@ onBeforeUnmount(() => {
           <div>截止 {{ round ? fmtTime(round.betEndAt) : '-' }}</div>
         </div>
         <div class="mt-1 text-[10px] text-gray-500">
-          前三名均中奖 · 赔率 = 奖池÷3 ÷ 该对象彩池 · 前三名全无人押中时全额退款
+          前三名均中奖 · 名次奖金 = 奖池÷3 ×（冠军100% / 亚军80% / 季军60%，剩余20%不发放）· 赔率为冠军档估算 · 前三名全无人押中则无人中奖
         </div>
         <div class="mt-2 flex flex-col gap-1.5 max-h-[220px] overflow-y-auto pr-1">
           <div v-for="p in st.participants" :key="p.id" class="flex items-center gap-2">
@@ -960,7 +987,7 @@ onBeforeUnmount(() => {
             <span
               class="w-12 text-right text-xs tabular-nums"
               :class="oddsFor(p.id) === null ? 'text-gray-600' : 'text-amber-300'"
-              :title="oddsFor(p.id) === null ? '暂无人押注' : '当前估算赔率，随彩池实时变化'"
+              :title="oddsFor(p.id) === null ? '暂无人押注' : '冠军档估算赔率，随彩池实时变化'"
             >
               {{ oddsFor(p.id) === null ? '—' : `@${fmtOdds(oddsFor(p.id))}` }}
             </span>
@@ -1022,14 +1049,11 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="mt-2 text-xs text-gray-400">
-          <template v-if="refundNotice">前三名无人押中，奖池已全额退款</template>
+          <template v-if="noWinnerNotice">前三名无人押中，无人中奖，奖池不派发</template>
           <template v-else>奖池 {{ pool.toLocaleString() }} · 已发放 {{ (round?.paidTotal ?? 0).toLocaleString() }}</template>
         </div>
         <div v-if="myResult && myResult.roundId === round?.id" class="mt-2 rounded-lg bg-white/5 border border-white/10 p-2 text-xs">
-          <div v-if="myResult.refunded" class="text-sky-300">
-            你本场下注 {{ myResult.betTotal.toLocaleString() }} 龙门币，无人押中前三名，已全额退款
-          </div>
-          <div v-else-if="myResult.payout > 0" class="text-emerald-300">
+          <div v-if="myResult.payout > 0" class="text-emerald-300">
             你本场下注 {{ myResult.betTotal.toLocaleString() }}，中奖 <b>{{ myResult.payout.toLocaleString() }}</b> 龙门币
           </div>
           <div v-else class="text-gray-400">

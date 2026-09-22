@@ -2,7 +2,14 @@ import { unwrap } from './user-http'
 
 // ---------- 用户端 ----------
 
-export interface RaceBrief {
+export interface RaceDurations {
+  betDurationSeconds: number
+  preRaceDurationSeconds: number
+  raceDurationSeconds: number
+  podiumDurationSeconds: number
+}
+
+export interface RaceBrief extends RaceDurations {
   id: number
   roomId: string
   name: string | null
@@ -10,7 +17,6 @@ export interface RaceBrief {
   sessionType: number
   totalRounds: number
   participantMode: number
-  betDurationSeconds: number
 }
 
 export interface RaceParticipantInfo {
@@ -24,7 +30,7 @@ export interface RaceParticipantInfo {
   displayScale: number | null
 }
 
-export interface RaceRoundInfo {
+export interface RaceRoundInfo extends RaceDurations {
   id: number
   roundNo: number
   status: string
@@ -89,16 +95,22 @@ export interface RaceAssetOption {
   type: number
 }
 
-export interface RaceCreateRequest {
+export interface RaceCreateRequest extends RaceDurations {
   roomId: string
   name?: string
   sessionType: number
   totalRounds?: number | null
+  /** 1=手动选择 5 名（全部场次沿用）；2=随机生成（每轮开赛时重新随机） */
   participantMode: number
+  /** participantMode=1 时必传：5 个不重复的 spine_asset.id */
   participantAssetIds?: number[] | null
-  /** sessionType=3（无限循环）时省略，后端立即开始并取默认竞猜周期 */
+  /** sessionType=3（无限循环）时省略，后端按指定时长立即开始 */
   betStartAtMs?: number
-  betEndAtMs?: number
+}
+
+export interface RaceDurationsRequest extends RaceDurations {
+  roundId: number
+  expectedStatus: string
 }
 
 export interface RaceAdminDetail {
@@ -123,8 +135,10 @@ export interface RaceDeveloperState {
   race: RaceBrief
   round: RaceRoundInfo | null
   participants: RaceParticipantInfo[]
-  nextParticipants: RaceParticipantInfo[]
   plannedRanking: number[] | null
+  /** 开发者已指定的下一场参赛名单（空=未指定） */
+  nextParticipants: RaceParticipantInfo[]
+  /** 当前模式是否还有下一场可安排 */
   canScheduleNext: boolean
 }
 
@@ -154,22 +168,22 @@ export async function setRaceDeveloperRanking(
   })
 }
 
-export async function setRaceDeveloperNextParticipants(
-  id: number,
-  body: { roundId: number; assetIds: number[] }
-): Promise<boolean> {
-  return unwrap<boolean>({
-    url: `/admin/online/race/${id}/developer/next-participants`,
-    method: 'POST',
-    data: body
-  })
-}
-
 export async function endRaceDeveloperRound(id: number, roundId: number, expectedStatus: string): Promise<boolean> {
   return unwrap<boolean>({
     url: `/admin/online/race/${id}/developer/end`,
     method: 'POST',
     data: { roundId, expectedStatus }
+  })
+}
+
+export async function setRaceDeveloperNextParticipants(
+  id: number,
+  assetIds: number[]
+): Promise<boolean> {
+  return unwrap<boolean>({
+    url: `/admin/online/race/${id}/developer/next-participants`,
+    method: 'POST',
+    data: { assetIds }
   })
 }
 
@@ -183,6 +197,10 @@ export async function listActiveRaces(): Promise<RaceAdminRow[]> {
 
 export async function createRace(body: RaceCreateRequest): Promise<number> {
   return unwrap<number>({ url: '/admin/online/race/create', method: 'POST', data: body })
+}
+
+export async function updateRaceDurations(id: number, body: RaceDurationsRequest): Promise<boolean> {
+  return unwrap<boolean>({ url: `/admin/online/race/${id}/durations`, method: 'POST', data: body })
 }
 
 export async function closeRace(id: number): Promise<boolean> {

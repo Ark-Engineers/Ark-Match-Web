@@ -116,6 +116,8 @@ const wrapRef = ref<HTMLDivElement | null>(null)
 const raceSceneRef = ref<InstanceType<typeof RaceScene> | null>(null)
 const raceState = ref<RaceStateResponse | null>(null)
 const raceSceneVisible = ref(false)
+// 仅消费本次入场意图，后续刷新和重连不再自动打开。
+let autoOpenRacePending = route.query.race === '1'
 
 const racePhaseLabel = computed(() => {
   const s = raceState.value?.round?.status
@@ -260,24 +262,30 @@ function wsUrl(path: string, query: Record<string, string>): string {
   return `${proto}//${host}${p}${path}?${search.toString()}`
 }
 
-async function loadSpineOptions(): Promise<void> {
-  if (spineOptions.value.length > 0) return
+async function loadSpineOptions(): Promise<boolean> {
+  if (destroyed) return false
+  if (spineOptions.value.length > 0) return true
   try {
     const res = await request<ApiResponse<SpineOption[]>>({
       url: '/user/spine/list',
       method: 'GET',
     })
-    if (res.code !== 0) return
-    spineOptions.value = res.data || []
+    if (destroyed || res.code !== 0 || !Array.isArray(res.data)) return false
+    spineOptions.value = res.data
+      .filter((option) => typeof option?.assetKey === 'string' && option.assetKey.trim())
+      .map((option) => ({ ...option, assetKey: option.assetKey.trim() }))
     if (!selectedAssetKey.value) {
       selectedAssetKey.value = assetKey.value || spineOptions.value[0]?.assetKey || ''
     }
-  } catch {}
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function applyAvatarChange(nextKey: string): Promise<void> {
   const key = String(nextKey || '').trim()
-  if (!key) return
+  if (destroyed || !key) return
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     ElMessage.warning('连接未建立')
     return
@@ -288,6 +296,7 @@ async function applyAvatarChange(nextKey: string): Promise<void> {
       await replacePlayerSpine(me, key)
     } catch {}
   }
+  if (destroyed) return
   selectedAssetKey.value = key
   wsSend({ type: 'change_avatar', assetKey: key })
 }
@@ -336,8 +345,10 @@ async function createSpineByAssetKey(assetKey: string): Promise<{
   moveAnim: string
   interactAnim: string
 }> {
+  if (destroyed) throw new Error('页面已退出')
   const skel = apiUrl(`/assets/spine/${assetKey}/${assetKey}.skel`)
   const resource: any = await PIXI.Assets.load(skel)
+  if (destroyed) throw new Error('页面已退出')
   const sp = new Spine(resource.spineData)
   sp.autoUpdate = true
   const anims = (sp as any)?.spineData?.animations?.map((a: any) => String(a?.name || '')).filter(Boolean) || []
@@ -371,8 +382,12 @@ async function createSpineByAssetKey(assetKey: string): Promise<{
 }
 
 async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
-  if (!app || !worldLayer) return null
+  if (destroyed || !app || !worldLayer) return null
   const built = await createSpineByAssetKey(p.assetKey)
+  if (destroyed || !app || !worldLayer) {
+    built.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+    return null
+  }
   const sp = built.spine
   const bounds = built.baseBounds
   const bw = Math.max(1, bounds.width)
@@ -434,9 +449,13 @@ async function createPlayer(p: SnapshotPlayer): Promise<RenderedPlayer | null> {
 }
 
 async function replacePlayerSpine(rp: RenderedPlayer, nextAssetKey: string): Promise<void> {
-  if (!app || !worldLayer) return
+  if (destroyed || !app || !worldLayer) return
   if (!nextAssetKey || rp.state.assetKey === nextAssetKey) return
   const built = await createSpineByAssetKey(nextAssetKey)
+  if (destroyed || !app || !worldLayer) {
+    built.spine.destroy({ children: true, texture: false, baseTexture: false } as any)
+    return
+  }
   const prev = rp.spine
   try {
     worldLayer.addChild(built.spine)
@@ -782,7 +801,7 @@ function wsSendCtrl(payload: any): void {
 }
 
 async function ensurePlayer(p: SnapshotPlayer): Promise<void> {
-  if (!app) return
+  if (destroyed || !app) return
   const existed = players.get(p.clientId)
   if (existed) {
     existed.state.nickname = p.nickname
@@ -801,7 +820,7 @@ async function ensurePlayer(p: SnapshotPlayer): Promise<void> {
     const rp = await createPlayer(p)
     if (!rp) return
     const already = players.get(p.clientId)
-    if (already) {
+    if (destroyed || already) {
       try {
         worldLayer?.removeChild(rp.spine)
         worldLayer?.removeChild(rp.hit)
@@ -814,7 +833,7 @@ async function ensurePlayer(p: SnapshotPlayer): Promise<void> {
     }
     players.set(p.clientId, rp)
   } catch {
-    if (p.clientId === myClientId) ElMessage.error('角色加载失败')
+    if (!destroyed && p.clientId === myClientId) ElMessage.error('角色加载失败')
   } finally {
     loadingPlayers.delete(p.clientId)
   }
@@ -837,6 +856,7 @@ function removePlayer(clientId: string): void {
 }
 
 function handleMsg(m: WsMsg): void {
+  if (destroyed) return
   if (m.type === 'error') {
     ElMessage.error(m.message || '进入房间失败')
     router.push('/online')
@@ -872,9 +892,17 @@ function handleMsg(m: WsMsg): void {
   if (m.type === 'race_start') {
     const r = raceState.value?.round
     if (r && Number(m.roundId) === r.id) {
+      const durationSeconds = Number(m.durationMs) / 1000
       raceState.value = {
         ...raceState.value!,
-        round: { ...r, status: 'RACING', seed: String(m.seed || ''), raceStartAt: Number(m.raceStartAt || 0) }
+        round: {
+          ...r,
+          status: 'RACING',
+          seed: String(m.seed || ''),
+          raceStartAt: Number(m.raceStartAt || 0),
+          raceDurationSeconds: Number.isInteger(durationSeconds) && durationSeconds >= 1 && durationSeconds <= 86400
+            ? durationSeconds : r.raceDurationSeconds
+        }
       }
     }
     raceSceneRef.value?.onRaceMsg(m)
@@ -1049,9 +1077,16 @@ function reloadPage(): void {
 }
 
 async function refreshRaceState(): Promise<void> {
+  if (destroyed) return
+  const requestedRoomId = roomId.value
   try {
-    const s = await getRaceState(roomId.value)
+    const s = await getRaceState(requestedRoomId)
+    if (destroyed || requestedRoomId !== roomId.value) return
     raceState.value = s
+    if (s.exists && autoOpenRacePending) {
+      autoOpenRacePending = false
+      raceSceneVisible.value = true
+    }
     if (!s.exists && raceSceneVisible.value) {
       raceSceneVisible.value = false
       ElMessage.info('赛马模式已结束')
@@ -1075,6 +1110,7 @@ watch(raceSceneVisible, () => {
 }, { flush: 'post' })
 
 async function connect(): Promise<void> {
+  if (destroyed) return
   const token = String(auth.session?.accessToken || '').trim()
   if (!token) {
     ElMessage.error('未登录')
@@ -1086,7 +1122,9 @@ async function connect(): Promise<void> {
       await auth.fetchProfile()
     } catch {}
   }
+  if (destroyed) return
   await loadSpineOptions()
+  if (destroyed) return
   if (!selectedAssetKey.value) selectedAssetKey.value = assetKey.value
   const myNickname = String(auth.nickname || (auth as any).profile?.nickname || '').trim() || `玩家${auth.userId}`
 
@@ -1113,6 +1151,7 @@ async function connect(): Promise<void> {
     socket = new WebSocket(url)
 
     socket.onopen = () => {
+      if (destroyed) return
       reconnectAttempt.value = 0
       connectionLost.value = false
       const joinAssetKey = String(selectedAssetKey.value || assetKey.value || '').trim()
@@ -1200,7 +1239,7 @@ function destroy(): void {
 
 function initPixi(): void {
   const el = wrapRef.value
-  if (!el) return
+  if (destroyed || app || !el) return
   app = new PIXI.Application({ backgroundAlpha: 0, antialias: true, resizeTo: el })
   ;(app.ticker as any).maxFPS = 60
   el.appendChild(app.view as any)
@@ -1232,15 +1271,29 @@ onBeforeRouteLeave(() => {
   destroy()
 })
 
-onMounted(() => {
-  if (!assetKey.value) {
+onMounted(async () => {
+  if (destroyed) return
+  // 显式选角优先；随机只在本次首次挂载执行，重连复用 selectedAssetKey。
+  selectedAssetKey.value = assetKey.value
+  if (!selectedAssetKey.value && route.query.randomAvatar === '1') {
+    const loaded = await loadSpineOptions()
+    if (destroyed) return
+    if (!loaded || spineOptions.value.length === 0) {
+      ElMessage.error(loaded ? '暂无可用角色，请稍后重试' : '角色目录加载失败，请稍后重试')
+      destroy()
+      void router.push('/online')
+      return
+    }
+    const index = Math.floor(Math.random() * spineOptions.value.length)
+    selectedAssetKey.value = spineOptions.value[index]!.assetKey
+  }
+  if (!selectedAssetKey.value) {
     ElMessage.error('请选择角色')
-    router.push('/online')
+    destroy()
+    void router.push('/online')
     return
   }
   simNetLagMs = Math.max(0, Math.min(300, Number(route.query.lag || 0)))
-  selectedAssetKey.value = assetKey.value
-  destroyed = false
   initPixi()
   void connect()
   window.addEventListener('keydown', onKeyDown)
