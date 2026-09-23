@@ -22,6 +22,7 @@ type ProfileResponse = {
   avatarCharName: string | null
   featuredRole: string | null
   signature: string | null
+  gender: string | null
   region: string | null
   age: number | null
   birthday: string | null
@@ -36,6 +37,7 @@ type ProfileResponse = {
 type UpdateProfileRequest = {
   featuredRole?: string | null
   signature?: string | null
+  gender?: string | null
   birthday?: string | null
   birthdayVisible?: boolean | null
   tags?: string[]
@@ -77,6 +79,7 @@ const canEdit = computed(() => isOwner.value && !isSuperAdmin.value)
 const form = reactive({
   featuredRole: '',
   signature: '',
+  gender: '' as string,
   birthday: '',
   birthdayVisible: false,
   tags: [] as string[],
@@ -89,7 +92,8 @@ const form = reactive({
 const profile = ref<ProfileResponse | null>(null)
 
 const security = reactive({
-  nickname: '',
+  nicknameBase: '',
+  nicknameSuffix: '',
   nicknameSaving: false,
   loginEmail: '',
   password: '',
@@ -191,6 +195,7 @@ async function loadProfile(): Promise<void> {
 
     form.featuredRole = res.data.featuredRole || ''
     form.signature = res.data.signature || ''
+    form.gender = res.data.gender || ''
     form.birthday = res.data.birthday || ''
     form.birthdayVisible = Boolean(res.data.birthdayVisible)
     form.tags = Array.isArray(res.data.tags) ? [...res.data.tags] : []
@@ -203,7 +208,15 @@ async function loadProfile(): Promise<void> {
       form.qq = String(res.data.qq || '')
       form.wechat = String(res.data.wechat || '')
       form.email = String(res.data.email || '')
-      security.nickname = String(res.data.nickname || '')
+      const nick = String(res.data.nickname || '')
+      const hashIdx = nick.lastIndexOf('#')
+      if (hashIdx > 0) {
+        security.nicknameBase = nick.substring(0, hashIdx)
+        security.nicknameSuffix = nick.substring(hashIdx)
+      } else {
+        security.nicknameBase = nick
+        security.nicknameSuffix = ''
+      }
       security.loginEmail = String(res.data.loginEmail || '')
       security.newLoginEmail = ''
     } else {
@@ -282,6 +295,7 @@ async function save(): Promise<void> {
     const payload: UpdateProfileRequest = {
       featuredRole: form.featuredRole.trim() || null,
       signature: form.signature.trim() || null,
+      gender: form.gender || null,
       birthday: form.birthday.trim() || null,
       birthdayVisible: Boolean(form.birthdayVisible),
       tags: form.tags.slice(0, 3),
@@ -304,19 +318,19 @@ async function save(): Promise<void> {
 
 async function saveNickname(): Promise<void> {
   if (!canEdit.value) return
-  const nick = String(security.nickname || '').trim()
-  if (!nick) {
+  const baseName = String(security.nicknameBase || '').trim()
+  if (!baseName) {
     ElMessage.warning('昵称不能为空')
     return
   }
-  if (nick.length > 64) {
-    ElMessage.warning('昵称长度不能超过64')
+  if (baseName.length > 59) {
+    ElMessage.warning('昵称长度不能超过59')
     return
   }
   if (security.nicknameSaving) return
   security.nicknameSaving = true
   try {
-    await request({ url: '/user/security/nickname', method: 'POST', data: { nickname: nick } })
+    await request({ url: '/user/security/nickname', method: 'POST', data: { nickname: baseName } })
     ElMessage.success('昵称已修改')
     await loadProfile()
     await authStore.fetchProfile()
@@ -482,9 +496,11 @@ onBeforeUnmount(() => {
 
         <el-form-item v-if="isOwner" label="昵称">
           <div style="display: flex; gap: 10px; align-items: center; width: 100%">
-            <el-input v-model="security.nickname" :disabled="!canEdit" maxlength="64" show-word-limit />
+            <el-input v-model="security.nicknameBase" :disabled="!canEdit" maxlength="59" show-word-limit style="flex: 1" />
+            <span v-if="security.nicknameSuffix" style="opacity: 0.6; white-space: nowrap">{{ security.nicknameSuffix }}</span>
             <el-button v-if="canEdit" type="primary" :loading="security.nicknameSaving" @click="saveNickname">修改</el-button>
           </div>
+          <div style="font-size: 12px; opacity: 0.6; margin-top: 4px">修改昵称会随机生成新的编号后缀</div>
         </el-form-item>
 
         <el-form-item label="龙门币">
@@ -534,6 +550,14 @@ onBeforeUnmount(() => {
 
         <el-form-item label="个性签名">
           <el-input v-model="form.signature" :disabled="!canEdit" type="textarea" :rows="3" maxlength="255" show-word-limit />
+        </el-form-item>
+
+        <el-form-item label="性别">
+          <el-radio-group v-model="form.gender" :disabled="!canEdit">
+            <el-radio value="">未设置</el-radio>
+            <el-radio value="MALE">男</el-radio>
+            <el-radio value="FEMALE">女</el-radio>
+          </el-radio-group>
         </el-form-item>
 
         <el-form-item label="地区（省市）">

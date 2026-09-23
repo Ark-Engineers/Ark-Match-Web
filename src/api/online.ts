@@ -24,6 +24,21 @@ export interface CreateOnlineRoomRequest {
   online?: boolean
 }
 
+export interface AdminRoomInfo {
+  roomId: string
+  name: string
+  online: boolean
+  permission: OnlineRoomPermission
+  capacity: number
+  creatorUserId: number
+  createdAt: number
+  updatedAt: number
+}
+
+export async function listAdminRooms(): Promise<AdminRoomInfo[]> {
+  return unwrap<AdminRoomInfo[]>({ url: '/admin/online/rooms', method: 'GET' })
+}
+
 export async function listOnlineRooms(): Promise<OnlineRoomCard[]> {
   return unwrap<OnlineRoomCard[]>({ url: '/user/online/rooms', method: 'GET' })
 }

@@ -2,14 +2,14 @@
 import { ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { getNewCaptcha, sendRegisterEmailCode } from '@/api/auth'
+import { getNewCaptcha, sendRegisterEmailCode, sendResetPasswordEmailCode, resetPassword } from '@/api/auth'
 import UiModal from './UiModal.vue'
 import UiButton from './UiButton.vue'
 
 const auth = useAuthStore()
 const ui = useUiStore()
 
-const tab = ref<'login' | 'register'>('login')
+const tab = ref<'login' | 'register' | 'forgot'>('login')
 // 记住密码：预填上次记住的账号
 const account = ref(auth.rememberedAccount ?? '')
 const password = ref('')
@@ -28,6 +28,18 @@ const captchaId = ref('')
 const captchaSvg = ref('')
 const captchaText = ref('')
 const captchaLoading = ref(false)
+const loginSuccessMsg = ref('')
+
+// 忘记密码专用状态
+const forgotEmail = ref('')
+const forgotCode = ref('')
+const forgotNewPwd = ref('')
+const forgotConfirmPwd = ref('')
+const forgotShowPwd = ref(false)
+const forgotCodeBtnLoading = ref(false)
+const forgotCodeCountdown = ref(0)
+let forgotCodeTimer: ReturnType<typeof setInterval> | null = null
+const forgotLoading = ref(false)
 
 async function loadCaptcha() {
   captchaLoading.value = true
@@ -112,6 +124,7 @@ async function handleRegister() {
     )
     ui.showToast('注册成功，请登录', 'success')
     tab.value = 'login'
+    loginSuccessMsg.value = '注册成功，请登录'
     password.value = ''
     confirmPassword.value = ''
     emailCode.value = ''
@@ -120,9 +133,67 @@ async function handleRegister() {
   }
 }
 
-function switchTab(t: 'login' | 'register') {
+function switchTab(t: 'login' | 'register' | 'forgot') {
   tab.value = t
   auth.error = ''
+  loginSuccessMsg.value = ''
+  if (t === 'forgot') {
+    forgotEmail.value = ''
+    forgotCode.value = ''
+    forgotNewPwd.value = ''
+    forgotConfirmPwd.value = ''
+  }
+}
+
+async function sendForgotCode() {
+  const e = forgotEmail.value.trim()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+    auth.error = '请输入正确的邮箱'
+    return
+  }
+  forgotCodeBtnLoading.value = true
+  auth.error = ''
+  try {
+    await sendResetPasswordEmailCode(e)
+    ui.showToast('验证码已发送，请查收邮箱', 'success')
+    forgotCodeCountdown.value = 60
+    if (forgotCodeTimer) clearInterval(forgotCodeTimer)
+    forgotCodeTimer = setInterval(() => {
+      forgotCodeCountdown.value -= 1
+      if (forgotCodeCountdown.value <= 0 && forgotCodeTimer) {
+        clearInterval(forgotCodeTimer)
+        forgotCodeTimer = null
+      }
+    }, 1000)
+  } catch (err: any) {
+    auth.error = err.message ?? '验证码发送失败'
+  } finally {
+    forgotCodeBtnLoading.value = false
+  }
+}
+
+async function handleForgotReset() {
+  if (!forgotEmail.value || !forgotCode.value || !forgotNewPwd.value || !forgotConfirmPwd.value) return
+  if (forgotNewPwd.value !== forgotConfirmPwd.value) {
+    auth.error = '两次密码不匹配'
+    return
+  }
+  if (forgotNewPwd.value.length < 8) {
+    auth.error = '密码至少 8 位'
+    return
+  }
+  forgotLoading.value = true
+  auth.error = ''
+  try {
+    await resetPassword(forgotEmail.value.trim(), forgotCode.value.trim(), forgotNewPwd.value)
+    tab.value = 'login'
+    loginSuccessMsg.value = '密码重置成功，请登录'
+    loadCaptcha()
+  } catch {
+    // error stored in auth.error
+  } finally {
+    forgotLoading.value = false
+  }
 }
 </script>
 
@@ -133,7 +204,7 @@ function switchTab(t: 'login' | 'register') {
       <div class="text-center mb-6">
         <img src="/logoD.png" alt="罗德之门" class="h-14 w-auto mx-auto mb-3" />
         <h2 class="text-xl font-bold text-white">罗德之门</h2>
-        <p class="text-gray-500 text-xs mt-1">{{ tab === 'login' ? '登录你的账号' : '创建新账号' }}</p>
+        <p class="text-gray-500 text-xs mt-1">{{ tab === 'login' ? '登录你的账号' : tab === 'register' ? '创建新账号' : '重置密码' }}</p>
       </div>
 
       <!-- Tab switcher -->
@@ -149,8 +220,6 @@ function switchTab(t: 'login' | 'register') {
           @click="switchTab('register')"
         >注册</button>
       </div>
-
-      <!-- Login form -->
       <form v-if="tab === 'login'" class="space-y-4" @submit.prevent="handleLogin">
         <input v-model="account" type="text" placeholder="账号"
                class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50"
@@ -188,12 +257,18 @@ function switchTab(t: 'login' | 'register') {
             <div class="h-full flex items-center justify-center [&>svg]:block [&>svg]:h-full [&>svg]:w-auto [&>svg]:max-w-none" v-html="captchaSvg" />
           </button>
         </div>
+        <p v-if="loginSuccessMsg" class="text-green-400 text-xs text-center">{{ loginSuccessMsg }}</p>
         <p v-if="auth.error" class="text-red-400 text-xs">{{ auth.error }}</p>
-        <UiButton type="submit" block :loading="auth.loading">登录</UiButton>
+        <div class="flex items-center justify-between">
+          <UiButton type="submit" block :loading="auth.loading">登录</UiButton>
+        </div>
+        <div class="text-right">
+          <button type="button" class="text-xs text-cyan-400/70 hover:text-cyan-300 transition cursor-pointer" @click="switchTab('forgot')">忘记密码？</button>
+        </div>
       </form>
 
       <!-- Register form -->
-      <form v-else class="space-y-3" @submit.prevent="handleRegister">
+      <form v-else-if="tab === 'register'" class="space-y-3" @submit.prevent="handleRegister">
         <div class="flex items-center gap-2">
           <input v-model="email" type="email" placeholder="邮箱" autocomplete="email"
                  class="flex-1 min-w-0 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50" />
@@ -214,6 +289,37 @@ function switchTab(t: 'login' | 'register') {
                class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50" />
         <p v-if="auth.error" class="text-red-400 text-xs">{{ auth.error }}</p>
         <UiButton type="submit" block :loading="auth.loading">注册</UiButton>
+      </form>
+
+      <!-- Forgot password form -->
+      <form v-else-if="tab === 'forgot'" class="space-y-4" @submit.prevent="handleForgotReset">
+        <input v-model="forgotEmail" type="email" placeholder="注册邮箱" autocomplete="email"
+               class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50" />
+        <div class="flex items-center gap-2">
+          <input v-model="forgotCode" type="text" placeholder="邮箱验证码" maxlength="6" autocomplete="one-time-code"
+                 class="flex-1 min-w-0 px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm tracking-widest focus:outline-none focus:border-cyan-500/50" />
+          <button type="button"
+                  class="shrink-0 px-3 py-3 rounded-lg bg-gray-800/50 border border-gray-700 text-xs text-gray-300 hover:text-cyan-300 hover:border-cyan-500/40 transition cursor-pointer whitespace-nowrap"
+                  :disabled="forgotCodeBtnLoading || forgotCodeCountdown > 0"
+                  @click="sendForgotCode">
+            {{ forgotCodeCountdown > 0 ? `${forgotCodeCountdown}s` : '获取验证码' }}
+          </button>
+        </div>
+        <div class="relative">
+          <input v-model="forgotNewPwd" :type="forgotShowPwd ? 'text' : 'password'" placeholder="新密码（至少 8 位）"
+                 class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50 pr-10"
+                 autocomplete="new-password" />
+          <button type="button" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm cursor-pointer"
+                  @click="forgotShowPwd = !forgotShowPwd">{{ forgotShowPwd ? '🙈' : '👁' }}</button>
+        </div>
+        <input v-model="forgotConfirmPwd" :type="forgotShowPwd ? 'text' : 'password'" placeholder="确认新密码"
+               class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-lg text-gray-200 text-sm focus:outline-none focus:border-cyan-500/50"
+               autocomplete="new-password" />
+        <p v-if="auth.error" class="text-red-400 text-xs">{{ auth.error }}</p>
+        <UiButton type="submit" block :loading="forgotLoading">重置密码</UiButton>
+        <div class="text-center">
+          <button type="button" class="text-xs text-gray-500 hover:text-gray-300 transition cursor-pointer" @click="switchTab('login')">返回登录</button>
+        </div>
       </form>
     </div>
   </UiModal>

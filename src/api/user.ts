@@ -9,7 +9,7 @@ export interface UserProfile {
   avatarUrl: string | null
   avatarCharId?: string | null
   avatarCharName?: string | null
-  gender: string
+  gender?: string | null
   bio: string | null
   birthYear: number | null
   status: string
@@ -69,6 +69,7 @@ export async function getMe(): Promise<UserProfile> {
 export async function updateProfile(data: {
   featuredRole?: string | null
   signature?: string | null
+  gender?: string | null
   birthday?: string | null
   birthdayVisible?: boolean | null
   tags?: string[]

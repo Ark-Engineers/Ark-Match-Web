@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import 'pixi-spine'
 import * as PIXI from 'pixi.js'
@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus'
 import { request } from '@/api'
 import { getRaceState, type RaceStateResponse } from '@/api/race'
 import { getPublicProfile, resolveArkAvatarUrl, type UserProfile } from '@/api/user'
+import { submitReport } from '@/api/report'
 import { API_BASE_URL } from '@/config'
 import { useAuthStore } from '@/stores/auth'
 import RaceScene from './race/RaceScene.vue'
@@ -82,6 +83,7 @@ type WsMsg =
   | { type: 'player_leave'; clientId: string }
   | { type: 'player_update'; player: SnapshotPlayer }
   | { type: 'emote'; clientId: string; emote: string }
+  | { type: 'chat'; clientId: string; userId: number; nickname: string; content: string; ts: number }
   | { type: 'room_offline' }
   | { type: 'error'; code: string; message: string }
   | { type: 'host_fps'; fps: number }
@@ -178,6 +180,12 @@ const cardProfile = ref<UserProfile | null>(null)
 const cardPos = ref({ x: 0, y: 0 })
 const emoteCooldown = new Map<string, number>()
 
+type ChatMsg = { clientId: string; userId: number; nickname: string; content: string; ts: number; self: boolean }
+const chatMessages = ref<ChatMsg[]>([])
+const chatInput = ref('')
+const chatPanelRef = ref<HTMLDivElement | null>(null)
+const MAX_CHAT_MESSAGES = 100
+
 function roleLabel(role: string | null | undefined): string {
   const r = String(role || '').toUpperCase()
   if (r === 'SUPER_ADMIN') return '超级管理员'
@@ -222,6 +230,54 @@ function closeProfileCard(): void {
   cardVisible.value = false
   cardLoading.value = false
   cardProfile.value = null
+}
+
+const reportDialogVisible = ref(false)
+const reportType = ref<'NICKNAME' | 'SIGNATURE' | 'CHAT'>('NICKNAME')
+const reportContent = ref('')
+const reportTargetUserId = ref(0)
+const reportSubmitting = ref(false)
+
+function openReportDialog(type: 'NICKNAME' | 'SIGNATURE' | 'CHAT', content?: string): void {
+  if (!cardProfile.value) return
+  reportTargetUserId.value = cardProfile.value.userId
+  reportType.value = type
+  reportContent.value = content || ''
+  reportDialogVisible.value = true
+}
+
+async function submitReportDialog(): Promise<void> {
+  if (!reportContent.value.trim()) {
+    ElMessage.warning('请填写举报内容')
+    return
+  }
+  reportSubmitting.value = true
+  try {
+    await submitReport({
+      reportedUserId: reportTargetUserId.value,
+      reportType: reportType.value,
+      content: reportContent.value.trim(),
+      roomId: roomId.value || undefined,
+    })
+    ElMessage.success('举报已提交，感谢您的反馈')
+    reportDialogVisible.value = false
+    closeProfileCard()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '举报失败')
+  } finally {
+    reportSubmitting.value = false
+  }
+}
+
+function reportChatMessage(msg: ChatMsg): void {
+  if (!cardProfile.value || cardProfile.value.userId !== msg.userId) {
+    reportTargetUserId.value = msg.userId
+  } else {
+    reportTargetUserId.value = cardProfile.value.userId
+  }
+  reportType.value = 'CHAT'
+  reportContent.value = msg.content
+  reportDialogVisible.value = true
 }
 
 const keyDown = new Set<string>()
@@ -828,6 +884,13 @@ function wsSendCtrl(payload: any): void {
   ctrlSocket.send(text)
 }
 
+function sendChat(): void {
+  const text = chatInput.value.trim()
+  if (!text) return
+  wsSend({ type: 'chat', content: text })
+  chatInput.value = ''
+}
+
 async function ensurePlayer(p: SnapshotPlayer): Promise<void> {
   if (destroyed || !app) return
   const existed = players.get(p.clientId)
@@ -966,6 +1029,26 @@ function handleMsg(m: WsMsg): void {
       ElMessage.info(`赛马竞猜结果：第 ${m.roundNo} 场未中奖`)
     }
     raceSceneRef.value?.onRaceMsg(m)
+    return
+  }
+  if (m.type === 'chat') {
+    const msg: ChatMsg = {
+      clientId: m.clientId,
+      userId: m.userId,
+      nickname: m.nickname,
+      content: m.content,
+      ts: Number(m.ts || Date.now()),
+      self: m.clientId === myClientId
+    }
+    chatMessages.value.push(msg)
+    if (chatMessages.value.length > MAX_CHAT_MESSAGES) {
+      chatMessages.value = chatMessages.value.slice(-MAX_CHAT_MESSAGES)
+    }
+    nextTick(() => {
+      if (chatPanelRef.value) {
+        chatPanelRef.value.scrollTop = chatPanelRef.value.scrollHeight
+      }
+    })
     return
   }
   if (!app) return
@@ -1293,6 +1376,14 @@ function initPixi(): void {
   app.ticker.add(tick)
 }
 
+function reselectRoom(): void {
+  window.removeEventListener('keydown', onKeyDown)
+  window.removeEventListener('keyup', onKeyUp)
+  closeProfileCard()
+  destroy()
+  router.push({ path: '/online', query: { keepAssetKey: selectedAssetKey.value || undefined } })
+}
+
 function back(): void {
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
@@ -1404,7 +1495,48 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <div v-if="cardProfile && !cardLoading" class="mt-3 flex gap-2 border-t border-white/10 pt-2">
+        <button
+          class="flex-1 rounded-md bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-400/30 px-2 py-1.5 text-xs text-gray-300 hover:text-red-300 cursor-pointer transition-colors"
+          @click="openReportDialog('NICKNAME')"
+        >
+          举报昵称
+        </button>
+        <button
+          class="flex-1 rounded-md bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-400/30 px-2 py-1.5 text-xs text-gray-300 hover:text-red-300 cursor-pointer transition-colors"
+          @click="openReportDialog('SIGNATURE')"
+        >
+          举报签名
+        </button>
+      </div>
     </div>
+
+    <el-dialog v-model="reportDialogVisible" title="举报" width="420px" :close-on-click-modal="false" append-to-body>
+      <el-form label-position="top">
+        <el-form-item label="举报类型">
+          <el-select v-model="reportType" style="width: 100%">
+            <el-option label="昵称" value="NICKNAME" />
+            <el-option label="个性签名" value="SIGNATURE" />
+            <el-option label="聊天记录" value="CHAT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="举报内容">
+          <el-input
+            v-model="reportContent"
+            type="textarea"
+            :rows="3"
+            placeholder="请描述举报内容，如为聊天记录举报则引用具体消息"
+            maxlength="500"
+            show-word-limit
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reportDialogVisible = false">取消</el-button>
+        <el-button type="danger" :loading="reportSubmitting" @click="submitReportDialog">提交举报</el-button>
+      </template>
+    </el-dialog>
 
     <div v-if="!raceSceneVisible && raceState?.exists" class="absolute left-6 top-6 z-10">
       <button
@@ -1451,6 +1583,12 @@ onBeforeUnmount(() => {
       :class="raceSceneVisible ? 'top-[calc(50%+1.5rem)]' : 'top-6'"
     >
       <button
+        class="mb-2 w-full px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
+        @click="reselectRoom"
+      >
+        重新选择房间
+      </button>
+      <button
         class="mb-3 w-full px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-100 cursor-pointer"
         @click="back"
       >
@@ -1482,6 +1620,37 @@ onBeforeUnmount(() => {
             切换
           </button>
         </div>
+      </div>
+    </div>
+
+    <div class="absolute left-4 bottom-4 z-10 w-80 flex flex-col">
+      <div
+        ref="chatPanelRef"
+        class="h-52 overflow-y-auto rounded-t-xl bg-black/45 border border-white/10 backdrop-blur-md px-3 py-2 scrollbar-thin"
+      >
+        <div v-if="chatMessages.length === 0" class="h-full flex items-center justify-center text-xs text-gray-500">
+          暂无消息
+        </div>
+        <div v-for="(msg, i) in chatMessages" :key="i" class="py-0.5 text-sm leading-relaxed" @contextmenu.prevent="!msg.self && reportChatMessage(msg)">
+          <span class="font-semibold" :class="msg.self ? 'text-cyan-300' : 'text-amber-300 cursor-pointer hover:underline'" @click.stop="!msg.self && reportChatMessage(msg)">{{ msg.nickname }}</span>
+          <span class="text-gray-500 mx-1">:</span>
+          <span class="text-gray-200 break-all">{{ msg.content }}</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 rounded-b-xl bg-black/55 border border-white/10 border-t-0 px-3 py-2">
+        <input
+          v-model="chatInput"
+          class="flex-1 h-8 px-2 rounded-lg bg-white/5 border border-white/10 text-sm text-gray-100 outline-none focus:border-cyan-400/60 placeholder-gray-500"
+          placeholder="输入消息…"
+          maxlength="500"
+          @keydown.enter.prevent="sendChat"
+        />
+        <button
+          class="h-8 px-3 rounded-lg bg-cyan-600/70 hover:bg-cyan-500/80 border border-cyan-400/30 text-sm text-white cursor-pointer transition-colors"
+          @click="sendChat"
+        >
+          发送
+        </button>
       </div>
     </div>
 

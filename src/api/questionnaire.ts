@@ -14,6 +14,8 @@ export interface QuestionItem {
   parentSeq: number | null
   triggerOption: string | null
   weight: string | null
+  isSuitable: number
+  isExcluded: number
 }
 
 export interface QuestionnaireState {

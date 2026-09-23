@@ -15,6 +15,8 @@ type QuestionRow = {
   parentSeq: number | null
   triggerOption: string
   weight: string
+  isSuitable: number
+  isExcluded: number
 }
 
 type DetailResponse = {
@@ -30,6 +32,8 @@ type DetailResponse = {
     parentSeq: number | null
     triggerOption: string | null
     weight: string | null
+    isSuitable: number
+    isExcluded: number
   }>
 }
 
@@ -110,6 +114,8 @@ async function load(): Promise<void> {
       parentSeq: q.parentSeq ?? null,
       triggerOption: q.triggerOption || '',
       weight: q.weight || '',
+      isSuitable: q.isSuitable ?? 0,
+      isExcluded: q.isExcluded ?? 0,
     }))
   } finally {
     loading.value = false
@@ -126,6 +132,8 @@ async function addRow(): Promise<void> {
     parentSeq: null,
     triggerOption: '',
     weight: '',
+    isSuitable: 0,
+    isExcluded: 0,
   })
 }
 
@@ -280,6 +288,8 @@ async function save(): Promise<void> {
         parentSeq: r.parentSeq,
         triggerOption: r.triggerOption.trim(),
         weight: r.weight.trim(),
+        isSuitable: r.isSuitable,
+        isExcluded: r.isExcluded,
       })),
     }
     const res = await request<ApiResponse<DetailResponse>>({
@@ -396,6 +406,16 @@ onMounted(async () => {
         <el-table-column label="权重" width="120">
           <template #default="{ row }">
             <el-input v-model="row.weight" placeholder="如 10.5" />
+          </template>
+        </el-table-column>
+        <el-table-column label="合适" width="80" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.isSuitable" :active-value="1" :inactive-value="0" />
+          </template>
+        </el-table-column>
+        <el-table-column label="排除" width="80" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.isExcluded" :active-value="1" :inactive-value="0" />
           </template>
         </el-table-column>
       </el-table>

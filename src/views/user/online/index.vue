@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { request } from '@/api'
@@ -18,6 +18,7 @@ type SpineOption = {
 }
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const loading = ref(false)
@@ -78,7 +79,11 @@ async function loadList(): Promise<void> {
       return
     }
     list.value = res.data || []
-    if (!selected.value && list.value.length > 0) selected.value = list.value[0]!
+    if (!selected.value && list.value.length > 0) {
+      const keep = String(route.query.keepAssetKey || '')
+      const match = keep ? list.value.find((i) => i.assetKey === keep) : null
+      selected.value = match || list.value[0]!
+    }
   } catch {
     ElMessage.error('加载失败')
   } finally {

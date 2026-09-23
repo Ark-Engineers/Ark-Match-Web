@@ -17,6 +17,8 @@ type CurrentQuestion = {
   parentSeq: number | null
   triggerOption: string | null
   weight: string | null
+  isSuitable: number
+  isExcluded: number
 }
 
 type CurrentState = {

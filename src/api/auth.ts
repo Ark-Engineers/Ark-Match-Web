@@ -80,3 +80,11 @@ export async function register(payload: {
 export async function adminRevoke(userId: number): Promise<void> {
   return unwrap<void>({ url: `/admin/auth/revoke/${userId}`, method: 'POST' })
 }
+
+export async function sendResetPasswordEmailCode(email: string): Promise<void> {
+  return unwrap<void>({ url: '/auth/reset-password/email-code/send', method: 'POST', data: { email } })
+}
+
+export async function resetPassword(email: string, emailCode: string, newPassword: string): Promise<void> {
+  return unwrap<void>({ url: '/auth/reset-password', method: 'POST', data: { email, emailCode, newPassword } })
+}

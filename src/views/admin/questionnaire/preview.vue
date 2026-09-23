@@ -16,6 +16,8 @@ type PreviewQuestion = {
   parentSeq: number | null
   triggerOption: string | null
   weight: string
+  isSuitable: number
+  isExcluded: number
 }
 
 type PreviewResponse = {

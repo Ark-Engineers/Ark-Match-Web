@@ -40,14 +40,14 @@ a {
 body.ark-admin {
   --ark-cyan: #0ea5e9;
   --ark-cyan-2: rgba(14, 165, 233, 0.18);
-  --ark-panel: rgba(255, 255, 255, 0.86);
+  --ark-panel: #ffffff;
   --ark-panel-solid: #ffffff;
   --ark-text: #0f172a;
   --ark-text-2: rgba(15, 23, 42, 0.72);
   --ark-text-3: rgba(15, 23, 42, 0.52);
 
   color: var(--ark-text);
-  background: #ffffff;
+  background: #f8fafc;
 
   --el-color-primary: var(--ark-cyan);
   --el-color-primary-dark-2: #0284c7;
@@ -57,35 +57,34 @@ body.ark-admin {
   --el-color-primary-light-8: rgba(14, 165, 233, 0.18);
   --el-color-primary-light-9: rgba(14, 165, 233, 0.12);
 
-  --el-bg-color: rgba(255, 255, 255, 0.86);
-  --el-bg-color-page: transparent;
-  --el-border-color: rgba(14, 165, 233, 0.18);
-  --el-border-color-light: rgba(14, 165, 233, 0.12);
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f8fafc;
+  --el-border-color: #e2e8f0;
+  --el-border-color-light: #f1f5f9;
   --el-text-color-primary: var(--ark-text);
   --el-text-color-regular: var(--ark-text-2);
   --el-text-color-secondary: var(--ark-text-3);
-  --el-fill-color-blank: rgba(255, 255, 255, 0.9);
-  --el-fill-color-light: rgba(255, 255, 255, 0.86);
-  --el-fill-color: rgba(255, 255, 255, 0.8);
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-light: #f8fafc;
+  --el-fill-color: #f1f5f9;
   --el-mask-color: rgba(15, 23, 42, 0.32);
 }
 
 body.ark-admin .admin-title {
-  color: rgba(230, 243, 255, 0.9);
-  letter-spacing: 0.5px;
+  color: #0f172a;
+  letter-spacing: 0.3px;
 }
 
 body.ark-admin .admin-card {
-  border-radius: 12px;
-  border: 1px solid rgba(14, 165, 233, 0.18);
-  background: rgba(255, 255, 255, 0.86);
-  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 180ms ease;
 }
 
 body.ark-admin .admin-card:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.12);
-  border-color: rgba(14, 165, 233, 0.3);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
 
 body.ark-admin .admin-page {
@@ -94,37 +93,37 @@ body.ark-admin .admin-page {
 }
 
 body.ark-admin .admin-tabs .el-tabs__nav-wrap::after {
-  background-color: rgba(88, 221, 255, 0.18);
+  background-color: #e2e8f0;
 }
 
 body.ark-admin .admin-page .el-table {
-  --el-table-border-color: rgba(14, 165, 233, 0.14);
-  --el-table-header-bg-color: rgba(14, 165, 233, 0.08);
-  --el-table-header-text-color: rgba(15, 23, 42, 0.86);
-  --el-table-row-hover-bg-color: rgba(14, 165, 233, 0.06);
-  --el-table-bg-color: rgba(255, 255, 255, 0.9);
-  --el-table-text-color: rgba(15, 23, 42, 0.82);
+  --el-table-border-color: #f1f5f9;
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-header-text-color: #334155;
+  --el-table-row-hover-bg-color: #f8fafc;
+  --el-table-bg-color: #ffffff;
+  --el-table-text-color: #334155;
 }
 
 body.ark-admin .admin-page .el-alert {
-  --el-alert-bg-color: rgba(255, 255, 255, 0.86);
-  --el-alert-border-color: rgba(14, 165, 233, 0.18);
+  --el-alert-bg-color: #ffffff;
+  --el-alert-border-color: #e2e8f0;
 }
 
 body.ark-admin .admin-page .el-input__wrapper,
 body.ark-admin .admin-page .el-textarea__inner {
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.14) inset;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px #e2e8f0 inset;
 }
 
 body.ark-admin .admin-page .el-input__wrapper.is-focus,
 body.ark-admin .admin-page .el-textarea__inner:focus {
-  box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.28) inset;
+  box-shadow: 0 0 0 1px var(--ark-cyan) inset;
 }
 
 body.ark-admin .admin-page .el-pagination {
-  --el-pagination-button-bg-color: rgba(255, 255, 255, 0.86);
-  --el-pagination-hover-color: rgba(2, 132, 199, 0.92);
+  --el-pagination-button-bg-color: #ffffff;
+  --el-pagination-hover-color: #0284c7;
 }
 
 .admin-page {
@@ -144,7 +143,7 @@ body.ark-admin .admin-page .el-pagination {
 .admin-title {
   font-size: 18px;
   font-weight: 700;
-  color: #173b6c;
+  color: #0f172a;
 }
 
 .admin-header-actions {
@@ -158,12 +157,12 @@ body.ark-admin .admin-page .el-pagination {
 
 .admin-tabs .el-tabs__nav-wrap::after {
   height: 1px;
-  background-color: var(--brand-blue-200);
+  background-color: #e2e8f0;
 }
 
 .admin-page .el-table {
-  --el-table-border-color: #eef2f7;
-  --el-table-header-bg-color: var(--brand-blue-50);
+  --el-table-border-color: #f1f5f9;
+  --el-table-header-bg-color: #f8fafc;
   --el-table-header-text-color: #334155;
 }
 
@@ -177,9 +176,10 @@ body.ark-admin .admin-page .el-pagination {
 }
 
 .admin-card {
-  border-radius: 10px;
-  border: 1px solid rgba(59, 130, 246, 0.18);
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
 .admin-table-wrap {
@@ -221,20 +221,18 @@ body.ark-admin .admin-page .el-pagination {
 }
 
 body.ark-admin .admin-animate-in {
-  animation: adminFadeUp 260ms ease both;
+  animation: adminFadeUp 220ms ease both;
   animation-delay: var(--delay, 0ms);
 }
 
 @keyframes adminFadeUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
-    filter: blur(3px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 
@@ -256,12 +254,11 @@ body.ark-admin .admin-animate-in {
 }
 
 body.ark-admin .admin-row-actions .el-button {
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  transition: box-shadow 160ms ease;
 }
 
 body.ark-admin .admin-row-actions .el-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -270,7 +267,6 @@ body.ark-admin .admin-row-actions .el-button:hover {
   }
 
   body.ark-admin .admin-card:hover {
-    transform: none;
     box-shadow: none;
   }
 
